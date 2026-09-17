@@ -6,7 +6,7 @@ Las pruebas están en la app, en **Ajustes → Laboratorio**. Hay que responder 
 - Spotify instalado y con sesión iniciada (Premium).
 - La app registrada en el panel de Spotify y el Client ID en `local.properties` (ver README).
 - **Recomendado:** activa el crossfade en Spotify (Ajustes → Reproducción) en 6–8 s.
-- **HyperOS:** para la app DJ Rodri (spike), activa el inicio automático y pon la batería en "Sin restricciones".
+- **HyperOS:** en Ajustes de DJ Rodri sigue la guía "Que HyperOS no mate la fiesta" (inicio automático, el inicio automático batería sin restricciones y candado en Recientes).
 
 ## Guion (unos 20 minutos)
 | # | Paso | Qué responde |
@@ -23,8 +23,8 @@ Las pruebas están en la app, en **Ajustes → Laboratorio**. Hay que responder 
 | 10 | **Siguiente vía Web API** | ¿Sirve el respaldo si App Remote falla, y con qué latencia? |
 | 11 | Elige tu playlist de fiesta → **Analizar cobertura (30)** | % de canciones con ISRC, letra sincronizada, coro detectado, BPM y tonalidad. |
 | 12 | Bloquea la pantalla 2 min con música → vuelve → **⏭** | ¿Sigue conectado con la pantalla bloqueada? |
-| 14 | Haz una fiesta de prueba de 30 min con la app completa, en modo Fiesta | ¿Los cortes caen en buen momento? ¿Cuántas veces saltaste tú? (Ajustes → Tus datos) |
 | 13 | **Guardar informe** y ejecuta en el PC el `adb pull` que aparece | El informe llega a `spike-reports/`. |
+| 14 | Haz una fiesta de prueba de 30 min con la app completa, en modo Fiesta | ¿Los cortes caen en buen momento? ¿Cuántas veces saltaste tú? (Ajustes → Tus datos) |
 
 ## Cómo decidimos con los números
 | Resultado | Decisión |
