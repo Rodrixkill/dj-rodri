@@ -45,6 +45,10 @@ class PlaylistAnalyzerTest {
     ) = PlaylistAnalyzer(
         lyricsSource = { q -> lyricsCalls += q.title; lyrics(q.title) },
         featuresSource = { ids -> featureCalls += ids; features(ids) },
+        genreSource = object : com.rvillarroel.djrodri.data.sources.GenreSource {
+            override suspend fun genresByIsrc(isrc: String) = com.rvillarroel.djrodri.data.sources.ArtistTags("mbid", "Artista", setOf("house"))
+            override suspend fun genresByArtistName(name: String) = null
+        },
         store = store,
         clock = { 1_000 },
         politenessDelayMs = 0,

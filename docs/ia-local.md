@@ -43,3 +43,24 @@ La app intenta **NPU → GPU → CPU** en ese orden y se queda con el primero qu
 - Que el backend NPU cargue en el Snapdragon 8 Elite Gen 5 (SM8850); si no, queda en GPU.
 - Cuánto tarda la primera carga y cuánto una respuesta (el objetivo es menos de 2 s en fiesta).
 - Que Gemma responda en español con JSON válido; si falla seguido, se sube el tiempo límite o se cambia de modelo.
+
+## Géneros y estilos
+Cada canción recibe etiquetas de género desde **MusicBrainz**, buscadas por su ISRC (el código de la industria, no un id de Spotify), y de la ficha de su artista, que se cachea porque una playlist tiene cientos de canciones pero decenas de artistas.
+
+- Las etiquetas libres ("progressive house", "latin pop") se normalizan a un vocabulario corto, y cada género arrastra su familia: pedir **electrónica** también trae house y techno; pedir **perreo** trae reggaetón y latin.
+- El género pesa más que cualquier otro número al elegir, pero una canción de otro género no queda prohibida: si no hay nada mejor, suena.
+- En la pantalla de fiesta salen los géneros que **de verdad** tiene tu playlist, como botones de un toque.
+
+**"Algo estilo Avicii"**, que el modelo también entiende:
+1. Si tienes canciones de Avicii en tu playlist, se usan **sus propias canciones** para sacar energía, bailabilidad, ánimo y rango de BPM. Es tu propia biblioteca, así que es lo más fiel.
+2. Si no lo tienes, MusicBrainz dice qué géneros toca y se usan esos.
+3. Lo que pediste explícitamente ("estilo Avicii pero tranqui") siempre gana sobre lo que sugiere el estilo.
+
+## Voz
+El micrófono usa el **reconocimiento del propio celular** (`createOnDeviceSpeechRecognizer`), así que tu voz no sale del teléfono ni necesita internet. Si tu celular no lo tiene instalado, la app te avisa y te dice dónde instalarlo (Ajustes de Android → Idiomas → Reconocimiento de voz).
+
+El flujo es siempre el mismo:
+```
+🎤 Hablar → texto → IA local o reglas → "Entendí: perreo sin Bad Bunny" → ✅ Dale (tu toque) → suena
+```
+**Nada llega a Spotify hasta que tocas "Dale".** Por eso el micrófono no convierte la app en un control por voz de Spotify, que es lo que prohíbe la regla III.3. Escribir el pedido sí se aplica al instante, porque escribir y tocar "Pedir" ya es una acción tuya.

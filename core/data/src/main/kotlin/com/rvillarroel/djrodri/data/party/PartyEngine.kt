@@ -77,6 +77,9 @@ class PartyEngine(
     private val _state = MutableStateFlow(PartyState())
     val state: StateFlow<PartyState> = _state
 
+    /** The analyzed songs of the party, so a request like "estilo Avicii" can be read off your own library. */
+    val profiles: List<TrackProfile> get() = tracks.values.map { it.profile }
+
     private val lock = Mutex()
     private var session: DjSession? = null
     private var sessionId = 0L

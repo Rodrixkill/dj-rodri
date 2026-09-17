@@ -17,6 +17,8 @@ data class TrackProfile(
     val energy: Double? = null,
     val danceability: Double? = null,
     val valence: Double? = null,
+    /** Canonical genres from MusicBrainz tags (see Genres). Empty when the song was not matched. */
+    val genres: Set<String> = emptySet(),
     val chorus: ChorusAnalysis? = null,
     /** Where you tapped "¡Drop!" while listening. Beats any estimate. */
     val userDropMs: Long? = null,

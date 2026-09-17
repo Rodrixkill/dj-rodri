@@ -8,6 +8,7 @@ import com.rvillarroel.djrodri.ai.LiteRtLlmEngine
 import com.rvillarroel.djrodri.analysis.AnalysisScheduler
 import com.rvillarroel.djrodri.data.ai.DjContext
 import com.rvillarroel.djrodri.data.ai.InterpretedIntent
+import com.rvillarroel.djrodri.data.ai.ArtistStyleResolver
 import com.rvillarroel.djrodri.data.ai.LlmIntentInterpreter
 import com.rvillarroel.djrodri.data.ai.RulesIntentInterpreter
 import com.rvillarroel.djrodri.data.analysis.PlaylistAnalyzer
@@ -15,6 +16,7 @@ import com.rvillarroel.djrodri.data.http.PoliteHttp
 import com.rvillarroel.djrodri.data.party.PartyEngine
 import com.rvillarroel.djrodri.data.party.PartyTrack
 import com.rvillarroel.djrodri.data.sources.LrclibClient
+import com.rvillarroel.djrodri.data.sources.MusicBrainzClient
 import com.rvillarroel.djrodri.data.sources.ReccoBeatsClient
 import com.rvillarroel.djrodri.library.LibraryRepository
 import com.rvillarroel.djrodri.library.db.DjDatabase
@@ -27,6 +29,7 @@ import com.rvillarroel.djrodri.spotify.RemoteController
 import com.rvillarroel.djrodri.spotify.SpotifyAuth
 import com.rvillarroel.djrodri.spotify.SpotifyWebApi
 import com.rvillarroel.djrodri.spotify.TokenStore
+import com.rvillarroel.djrodri.voice.VoiceInput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -55,10 +58,13 @@ class AppContainer(private val context: Context) {
     val library by lazy { LibraryRepository(webApi, database.library()) }
 
     private val politeHttp = PoliteHttp(http)
+    private val musicBrainz by lazy { MusicBrainzClient(politeHttp) }
+    private val styleResolver by lazy { ArtistStyleResolver(musicBrainz) }
     val analyzer by lazy {
         PlaylistAnalyzer(
             lyricsSource = LrclibClient(politeHttp),
             featuresSource = ReccoBeatsClient(politeHttp),
+            genreSource = musicBrainz,
             store = RoomAnalysisStore(database.analysis()),
         )
     }
@@ -76,8 +82,12 @@ class AppContainer(private val context: Context) {
             mode = settings.party.value.mode,
         )
         val interpreter = if (settings.useLocalAi.value) llmInterpreter else rulesInterpreter
-        return interpreter.interpret(request, djContext)
+        val interpreted = interpreter.interpret(request, djContext)
+        // "estilo Avicii" is worked out from his songs in your own library, or from MusicBrainz genres.
+        return interpreted.copy(intent = styleResolver.resolve(interpreted.intent, party.profiles))
     }
+
+    val voice by lazy { VoiceInput(context) }
 
     val remote = RemoteController()
     val party by lazy {

@@ -2,6 +2,7 @@ package com.rvillarroel.djrodri.data.ai
 
 import com.rvillarroel.djrodri.domain.dj.DjMode
 import com.rvillarroel.djrodri.domain.dj.EnergyCurve
+import com.rvillarroel.djrodri.domain.music.Genres
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -75,6 +76,29 @@ class RulesIntentInterpreterTest {
         assertEquals("Como venga", intent.label)
         assertNull(intent.targetEnergy)
         assertTrue(intent.excludeArtists.isEmpty())
+    }
+
+    @Test
+    fun `the genre you name is part of the request`() {
+        val intent = rules.parse("pon house y techno")
+
+        assertTrue(Genres.HOUSE in intent.genres)
+        assertTrue(Genres.TECHNO in intent.genres)
+        assertTrue(intent.label.contains("house"))
+    }
+
+    @Test
+    fun `asking for a style keeps the artist as the reference, not as an exclusion`() {
+        val intent = rules.parse("algo estilo Avicii")
+
+        assertEquals(listOf("Avicii"), intent.likeArtists)
+        assertTrue(intent.excludeArtists.isEmpty())
+        assertTrue(intent.label.contains("Avicii"))
+    }
+
+    @Test
+    fun `a genre after "como" is a genre, not an artist called House`() {
+        assertTrue(rules.parse("algo como house").likeArtists.isEmpty())
     }
 
     @Test

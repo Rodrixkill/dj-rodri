@@ -15,6 +15,9 @@ android {
     namespace = "com.rvillarroel.djrodri"
     compileSdk = 36
 
+    // The exported schemas ship as assets so the migration test can validate against them.
+    sourceSets["main"].assets.srcDirs("$projectDir/schemas")
+
     defaultConfig {
         applicationId = "com.rvillarroel.djrodri"
         // Android 16 only: the app is for one phone, so there is no reason to carry old-API branches.
@@ -79,6 +82,7 @@ dependencies {
 
     testImplementation(libs.junit4)
     testImplementation(libs.robolectric)
+    testImplementation(libs.room.testing)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.kotlinx.coroutines.test)
 }

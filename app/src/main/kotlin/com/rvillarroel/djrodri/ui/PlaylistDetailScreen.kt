@@ -145,6 +145,7 @@ private fun CoverageSummary(c: Coverage) {
         Stat("con coro", "${c.withChorus}", color = DjColors.Neon)
         Stat("con drop", "${c.withDrop}", color = DjColors.Drop)
         Stat("con BPM", "${c.withTempo}")
+        Stat("con género", "${c.withGenres}")
         Stat("siempre completas", "${c.alwaysWhole}", color = DjColors.Whole)
     }
     if (c.failed > 0) Text("${c.failed} no se pudieron analizar (se reintentan la próxima vez)", color = DjColors.Warning)
@@ -157,6 +158,7 @@ private fun TrackLine(row: TrackRow) {
     Panel {
         Text("${row.track.name} — ${row.track.artist}", style = MaterialTheme.typography.titleMedium)
         val facts = buildList {
+            if (p.genres.isNotEmpty()) add(p.genres.take(3).joinToString("/"))
             p.bpm?.let { add("${it.toInt()} BPM") }
             p.key?.let { add("tono $it") }
             p.chorus?.let { add("coro x${it.occurrences.size}") }

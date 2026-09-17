@@ -3,6 +3,7 @@ package com.rvillarroel.djrodri.data.ai
 import com.rvillarroel.djrodri.domain.dj.DjIntent
 import com.rvillarroel.djrodri.domain.dj.DjMode
 import com.rvillarroel.djrodri.domain.dj.EnergyCurve
+import com.rvillarroel.djrodri.domain.music.Genres
 import java.text.Normalizer
 
 enum class IntentSource {
@@ -34,15 +35,28 @@ class RulesIntentInterpreter : IntentInterpreter {
         val text = normalize(request)
         val matched = RULES.filter { rule -> rule.keywords.any { it in text } }
         val excluded = excludedArtists(request)
+        val genres = Genres.expand(Genres.mentioned(request))
+        val styleOf = styleArtists(request)
+        val extras = buildList {
+            if (genres.isNotEmpty()) add(genres.joinToString(", "))
+            if (styleOf.isNotEmpty()) add("estilo ${styleOf.joinToString(", ")}")
+            if (excluded.isNotEmpty()) add("sin ${excluded.joinToString(", ")}")
+        }
         if (matched.isEmpty()) {
             return when {
-                excluded.isNotEmpty() -> DjIntent(label = "Sin ${excluded.joinToString(", ")}", excludeArtists = excluded)
-                else -> DjIntent.Default
+                extras.isEmpty() -> DjIntent.Default
+                else -> DjIntent(
+                    label = extras.joinToString(" · ").replaceFirstChar(Char::uppercase),
+                    excludeArtists = excluded,
+                    genres = genres,
+                    likeArtists = styleOf,
+                )
             }
         }
+        val label = (listOf(matched.joinToString(" + ") { it.label }) + extras).joinToString(" · ")
         return matched.map { it.intent(context) }
             .reduce(::merge)
-            .let { it.copy(label = matched.joinToString(" + ") { rule -> rule.label }, excludeArtists = excluded) }
+            .copy(label = label, excludeArtists = excluded, genres = genres, likeArtists = styleOf)
     }
 
     /** Two requests at once ("algo para bailar pero tranqui") land in the middle instead of one winning. */
@@ -68,6 +82,14 @@ class RulesIntentInterpreter : IntentInterpreter {
     private fun maxOfNullable(a: Double?, b: Double?) = if (a != null && b != null) maxOf(a, b) else a ?: b
     private fun minOfNullable(a: Double?, b: Double?) = if (a != null && b != null) minOf(a, b) else a ?: b
 
+    /** "estilo Avicii", "tipo Daft Punk", "como Shakira": whatever follows names the style you want. */
+    private fun styleArtists(request: String): List<String> =
+        Regex("""(?:estilo|tipo|como|onda|parecido a|al estilo de)\s+([\p{L}\d\s.'&]{3,30})""", RegexOption.IGNORE_CASE)
+            .findAll(request)
+            .map { it.groupValues[1].trim().trimEnd('.', ',') }
+            .filter { Genres.mentioned(it).isEmpty() && normalize(it) !in NOT_ARTISTS }
+            .toList()
+
     /** "sin bad bunny", "nada de maluma": whatever follows is treated as an artist. */
     private fun excludedArtists(request: String): List<String> =
         Regex("""(?:sin|nada de|menos)\s+([\p{L}\s.']{3,30})""", RegexOption.IGNORE_CASE)
@@ -86,7 +108,7 @@ class RulesIntentInterpreter : IntentInterpreter {
     private class Rule(val label: String, val keywords: List<String>, val intent: (DjContext) -> DjIntent)
 
     private companion object {
-        val NOT_ARTISTS = setOf("parar", "bajar", "energia", "cortes", "reggaeton", "perreo", "lentas", "musica")
+        val NOT_ARTISTS = setOf("parar", "bajar", "energia", "cortes", "reggaeton", "perreo", "lentas", "musica", "siempre", "ayer", "antes", "eso", "esto", "venia")
 
         val RULES = listOf(
             Rule("Perreo", listOf("perre", "reggaeton", "regueton", "dembow")) {

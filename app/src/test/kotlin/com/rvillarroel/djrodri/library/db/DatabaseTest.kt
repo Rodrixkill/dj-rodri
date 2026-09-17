@@ -32,8 +32,9 @@ class DatabaseTest {
     private fun track(id: String) = TrackEntity(id, "spotify:track:$id", "Tema $id", "Artista", "Album", 200_000, null)
 
     private fun analysis(id: String, status: LyricsStatus) = TrackAnalysis(
-        trackId = id, lyricsStatus = status, syncedLrc = "[00:01.00] hola", featuresFound = true, tempo = 96.0,
-        key = 9, mode = 0, energy = 0.8, danceability = 0.7, valence = 0.5, analyzerVersion = 1, analyzedAtMs = 5,
+        trackId = id, lyricsStatus = status, syncedLrc = "[00:01.00] hola", featuresFound = true,
+        genres = setOf("house", "edm"), artistMbid = "mbid-$id", tempo = 96.0,
+        key = 9, mode = 0, energy = 0.8, danceability = 0.7, valence = 0.5, analyzerVersion = 2, analyzedAtMs = 5,
     )
 
     @Test

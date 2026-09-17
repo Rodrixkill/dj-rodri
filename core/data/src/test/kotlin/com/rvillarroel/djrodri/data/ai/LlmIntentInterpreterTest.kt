@@ -104,6 +104,17 @@ class LlmIntentInterpreterTest {
     }
 
     @Test
+    fun `genres the model names are mapped to the vocabulary, and invented ones are dropped`() = runTest {
+        val engine = FakeEngine("""{"label":"Set electrónico","genres":["Progressive House","reggaetón","musica de marcianos"],"excludeGenres":["cumbia"],"likeArtists":["Avicii"]}""")
+
+        val intent = LlmIntentInterpreter(engine).interpret("algo estilo Avicii", context).intent
+
+        assertEquals(setOf("house", "edm", "electronic", "reggaeton", "latin"), intent.genres)
+        assertEquals(setOf("cumbia"), intent.excludeGenres)
+        assertEquals(listOf("Avicii"), intent.likeArtists)
+    }
+
+    @Test
     fun `how long the model took is measured, because it happens mid-party`() = runTest {
         var now = 0L
         val engine = FakeEngine("""{"label":"x","targetEnergy":0.5}""")

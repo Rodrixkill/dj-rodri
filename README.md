@@ -11,7 +11,7 @@ DJ para fiestas en Android, de uso personal. Analiza tus playlists de Spotify (c
 2. **Tus playlists** → elige una → **Analizar playlist**. Sigue en segundo plano con una notificación; cada canción se analiza una sola vez.
 3. **🎉 ¡A la fiesta!** El DJ decide solo: canciones completas, cortes en fin de coro y entradas directas al drop, según el modo (Natural / Fiesta / Hora loca).
 4. Durante la fiesta:
-   - **Pídele algo:** escribe "algo para perrear sin Bad Bunny" y el DJ reordena lo que viene. Lo entiende un modelo local, y si no hay modelo, palabras clave.
+   - **Pídele algo:** escribe o dicta "pon house estilo Avicii sin Bad Bunny" y el DJ reordena lo que viene: entiende géneros, estilos de artista, ánimo y energía. Lo interpreta un modelo local (o palabras clave si no hay modelo), y por voz nada suena hasta que tocas "Dale".
    - **Controles:** ⏮ ⏯ ⏭, **Completa**, **No va**, 🔥/😌, cambiar de playlist.
    - **¡Drop!** guarda dónde entra el drop de verdad, para todas las fiestas siguientes.
    - **Fuera de la app:** los mismos controles están en la notificación, el widget y el tile de Ajustes rápidos.
@@ -26,8 +26,8 @@ DJ para fiestas en Android, de uso personal. Analiza tus playlists de Spotify (c
 | Módulo | Qué tiene | Tests |
 |---|---|---|
 | `core/domain` | Lógica pura: letras LRC y coros, BPM y Camelot, y el **motor DJ** (`dj/`): puntos de corte y drop, orden del set, cupo de cortes por modo y la sesión con sus controles. | JUnit 5, con propiedades sobre fiestas aleatorias |
-| `core/data` | Clientes de LRCLIB y ReccoBeats con reintentos, **analizador de playlists** con caché, **`PartyEngine`** (ejecuta el motor sobre un `PlayerPort`) y la **capa de IA**: intérprete por reglas y por LLM, con validación y respaldo. | MockWebServer y reproductor simulado con tiempo virtual |
-| `app` | Room, sesión de Spotify (PKCE y tokens cifrados en Keystore), App Remote, motor LiteRT-LM para la IA local, análisis con WorkManager, servicio de fiesta, pantallas, widget, tile y Laboratorio. | Robolectric (base de datos) |
+| `core/data` | Clientes de LRCLIB, ReccoBeats y MusicBrainz (géneros) con reintentos, **analizador de playlists** con caché, **`PartyEngine`** (ejecuta el motor sobre un `PlayerPort`) y la **capa de IA**: intérprete por reglas y por LLM, con validación y respaldo. | MockWebServer y reproductor simulado con tiempo virtual |
+| `app` | Room con migraciones testeadas, sesión de Spotify (PKCE y tokens cifrados en Keystore), App Remote, motor LiteRT-LM para la IA local, voz en el dispositivo, análisis con WorkManager, servicio de fiesta, pantallas, widget, tile y Laboratorio. | Robolectric (base de datos) |
 
 ## Configuración local
 1. Crea la app en <https://developer.spotify.com/dashboard>:

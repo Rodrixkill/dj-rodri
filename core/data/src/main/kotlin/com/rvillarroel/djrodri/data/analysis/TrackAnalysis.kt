@@ -27,6 +27,8 @@ data class TrackAnalysis(
     val lyricsStatus: LyricsStatus,
     val syncedLrc: String?,
     val featuresFound: Boolean,
+    val genres: Set<String>,
+    val artistMbid: String?,
     val tempo: Double?,
     val key: Int,
     val mode: Int,
@@ -43,6 +45,9 @@ data class TrackAnalysis(
         bpm = tempo,
         key = CamelotKey.from(key, mode),
         energy = energy,
+        danceability = danceability,
+        valence = valence,
+        genres = genres,
         chorus = syncedLrc?.let { ChorusFinder.find(LrcParser.parse(it), track.durationMs) },
         userDropMs = userDropMs,
     )
@@ -51,8 +56,8 @@ data class TrackAnalysis(
     val isFinal: Boolean get() = lyricsStatus != LyricsStatus.ERROR
 
     companion object {
-        /** Bump when what we fetch changes; older analyses are then refreshed. */
-        const val CURRENT_VERSION = 1
+        /** Bump when what we fetch changes; older analyses are then refreshed. Version 2 added MusicBrainz genres. */
+        const val CURRENT_VERSION = 2
     }
 }
 

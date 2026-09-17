@@ -36,30 +36,47 @@ data class DjIntent(
     val minBpm: Double? = null,
     val maxBpm: Double? = null,
     val excludeArtists: List<String> = emptyList(),
+    /** Canonical genres asked for ("house", "rock"); see [com.rvillarroel.djrodri.domain.music.Genres]. */
+    val genres: Set<String> = emptySet(),
+    val excludeGenres: Set<String> = emptySet(),
+    /** "algo estilo Avicii": kept for the label and for how the numbers above were worked out. */
+    val likeArtists: List<String> = emptyList(),
     /** A request like "a fondo" can also change how boldly the DJ cuts. */
     val mode: DjMode? = null,
 ) {
     /** 0..1: how well a song fits. Missing data scores neutral, so a song is never excluded for lacking analysis. */
     fun fit(track: TrackProfile): Double {
         if (excludeArtists.any { track.artist.contains(it, ignoreCase = true) }) return 0.0
-        val scores = buildList {
+        if (excludeGenres.isNotEmpty() && track.genres.any { it in excludeGenres }) return 0.0
+
+        val scored = buildList {
             track.energy?.let { energy ->
-                minEnergy?.let { add(band(energy, it, 1.0)) }
-                maxEnergy?.let { add(band(energy, 0.0, it)) }
-                targetEnergy?.let { add(1.0 - abs(energy - it)) }
+                minEnergy?.let { add(1.0 to band(energy, it, 1.0)) }
+                maxEnergy?.let { add(1.0 to band(energy, 0.0, it)) }
+                targetEnergy?.let { add(1.0 to (1.0 - abs(energy - it))) }
             }
-            track.danceability?.let { d -> minDanceability?.let { add(band(d, it, 1.0)) } }
+            track.danceability?.let { d -> minDanceability?.let { add(1.0 to band(d, it, 1.0)) } }
             track.valence?.let { v ->
-                minValence?.let { add(band(v, it, 1.0)) }
-                maxValence?.let { add(band(v, 0.0, it)) }
+                minValence?.let { add(1.0 to band(v, it, 1.0)) }
+                maxValence?.let { add(1.0 to band(v, 0.0, it)) }
             }
             track.bpm?.let { bpm ->
                 val folded = Tempo.fold(bpm)
-                minBpm?.let { add(band(folded, Tempo.fold(it), Double.MAX_VALUE, tolerance = 12.0)) }
-                maxBpm?.let { add(band(folded, 0.0, Tempo.fold(it), tolerance = 12.0)) }
+                minBpm?.let { add(1.0 to band(folded, Tempo.fold(it), Double.MAX_VALUE, tolerance = 12.0)) }
+                maxBpm?.let { add(1.0 to band(folded, 0.0, Tempo.fold(it), tolerance = 12.0)) }
+            }
+            // Asking for a style is the most concrete thing you can say, so it weighs more than any single number.
+            if (genres.isNotEmpty()) {
+                val match = when {
+                    track.genres.isEmpty() -> NEUTRAL_FIT
+                    track.genres.any { it in genres } -> 1.0
+                    else -> OFF_GENRE_FIT
+                }
+                add(GENRE_WEIGHT to match)
             }
         }
-        return if (scores.isEmpty()) NEUTRAL_FIT else scores.average()
+        if (scored.isEmpty()) return NEUTRAL_FIT
+        return scored.sumOf { (weight, value) -> weight * value } / scored.sumOf { it.first }
     }
 
     /** Inside the range scores 1; outside it fades instead of dropping to zero, so a near miss can still play. */
@@ -71,6 +88,10 @@ data class DjIntent(
 
     companion object {
         const val NEUTRAL_FIT = 0.5
+
+        /** A song of another genre is not banned: with nothing better around, it still plays. */
+        const val OFF_GENRE_FIT = 0.1
+        const val GENRE_WEIGHT = 3.0
 
         /** Shown when nothing was asked for: the DJ just reads the room's energy. */
         val Default = DjIntent(label = "Como venga")

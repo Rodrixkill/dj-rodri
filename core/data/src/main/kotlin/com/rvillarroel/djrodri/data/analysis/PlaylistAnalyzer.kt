@@ -2,6 +2,7 @@ package com.rvillarroel.djrodri.data.analysis
 
 import com.rvillarroel.djrodri.data.sources.AudioFeatures
 import com.rvillarroel.djrodri.data.sources.AudioFeaturesSource
+import com.rvillarroel.djrodri.data.sources.GenreSource
 import com.rvillarroel.djrodri.data.sources.Lyrics
 import com.rvillarroel.djrodri.data.sources.LyricsQuery
 import com.rvillarroel.djrodri.data.sources.LyricsSource
@@ -27,6 +28,7 @@ data class Coverage(
     val withTempo: Int,
     val withKey: Int,
     val withDrop: Int,
+    val withGenres: Int,
     /** Songs with no confident cut point in Fiesta mode, or too short to cut: they will always play whole. */
     val alwaysWhole: Int,
     val failed: Int,
@@ -40,6 +42,7 @@ data class Coverage(
                 withChorus = profiles.count { it.chorus != null },
                 withTempo = profiles.count { it.bpm != null },
                 withKey = profiles.count { it.key != null },
+                withGenres = profiles.count { it.genres.isNotEmpty() },
                 withDrop = profiles.count { p ->
                     CueEstimator.estimate(p).drop?.let { it.confidence >= TransitionPlanner.MIN_DROP_CONFIDENCE } == true
                 },
@@ -60,10 +63,11 @@ data class Coverage(
 class PlaylistAnalyzer(
     private val lyricsSource: LyricsSource,
     private val featuresSource: AudioFeaturesSource,
+    private val genreSource: GenreSource,
     private val store: AnalysisStore,
     private val clock: () -> Long = System::currentTimeMillis,
-    /** Pause between LRCLIB calls: it is a free community service. */
-    private val politenessDelayMs: Long = 300,
+    /** Pause between songs: MusicBrainz asks for at most one request per second, and LRCLIB is free too. */
+    private val politenessDelayMs: Long = 1_100,
 ) {
     fun analyze(tracks: List<SourceTrack>, force: Boolean = false): Flow<AnalysisProgress> = flow {
         val unique = tracks.distinctBy { it.id }
@@ -121,6 +125,16 @@ class PlaylistAnalyzer(
         } catch (e: Exception) {
             null
         }
+        // Genres need an ISRC, the industry code, so the lookup never travels through a Spotify id.
+        val tags = track.isrc?.let {
+            try {
+                genreSource.genresByIsrc(it)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+        }
         val f = features?.get(track.id)
         return TrackAnalysis(
             trackId = track.id,
@@ -133,6 +147,8 @@ class PlaylistAnalyzer(
             },
             syncedLrc = (lyrics as? Lyrics.Synced)?.lrc,
             featuresFound = f != null,
+            genres = tags?.genres.orEmpty(),
+            artistMbid = tags?.artistMbid,
             tempo = f?.tempo,
             key = f?.key ?: -1,
             mode = f?.mode ?: -1,

@@ -3,6 +3,7 @@ package com.rvillarroel.djrodri.data.ai
 import com.rvillarroel.djrodri.domain.dj.DjIntent
 import com.rvillarroel.djrodri.domain.dj.DjMode
 import com.rvillarroel.djrodri.domain.dj.EnergyCurve
+import com.rvillarroel.djrodri.domain.music.Genres
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -65,13 +66,18 @@ class LlmIntentInterpreter(
             minBpm = dto.minBpm?.bpm(),
             maxBpm = dto.maxBpm?.bpm(),
             excludeArtists = dto.excludeArtists.orEmpty().mapNotNull { it.trim().takeIf(String::isNotEmpty) }.take(MAX_EXCLUDED),
+            // Asking for house also means edm and electronic; excluding cumbia must not exclude all latin music.
+            genres = Genres.expand(dto.genres.orEmpty()),
+            excludeGenres = dto.excludeGenres.orEmpty().mapNotNull(Genres::canonical).toSet(),
+            likeArtists = dto.likeArtists.orEmpty().mapNotNull { it.trim().takeIf(String::isNotEmpty) }.take(MAX_EXCLUDED),
             mode = dto.mode?.let { name -> runCatching { DjMode.valueOf(name.uppercase()) }.getOrNull() },
         )
         // A model that answers with nothing usable is worse than the rules: treat it as a failure.
         val saysSomething = listOfNotNull(
             intent.targetEnergy, intent.minEnergy, intent.maxEnergy, intent.minDanceability,
             intent.minValence, intent.maxValence, intent.minBpm, intent.maxBpm,
-        ).isNotEmpty() || intent.excludeArtists.isNotEmpty() || intent.curve != EnergyCurve.WAVE
+        ).isNotEmpty() || intent.excludeArtists.isNotEmpty() || intent.genres.isNotEmpty() ||
+            intent.excludeGenres.isNotEmpty() || intent.likeArtists.isNotEmpty() || intent.curve != EnergyCurve.WAVE
         return intent.takeIf { saysSomething }
     }
 
@@ -92,6 +98,9 @@ class LlmIntentInterpreter(
         val minBpm: Double? = null,
         val maxBpm: Double? = null,
         val excludeArtists: List<String>? = null,
+        val genres: List<String>? = null,
+        val excludeGenres: List<String>? = null,
+        val likeArtists: List<String>? = null,
         val mode: String? = null,
     )
 
@@ -110,6 +119,10 @@ class LlmIntentInterpreter(
             minBpm, maxBpm: pulsaciones por minuto reales de ese género.
             curve: STEADY (mantener), BUILD (subir), WAVE (subidas y bajadas) o WIND_DOWN (bajar).
             excludeArtists: lista de artistas que el usuario pidió evitar.
+            genres: géneros pedidos, en inglés y en minúsculas (house, techno, edm, pop, rock, metal, indie, hip hop,
+            trap, r&b, reggaeton, cumbia, salsa, bachata, merengue, reggae, disco, funk, soul, jazz, folk, balada).
+            excludeGenres: géneros que el usuario NO quiere.
+            likeArtists: artistas que el usuario usó como referencia de estilo ("algo estilo Avicii").
             mode: NATURAL (pocos cortes), FIESTA o HORA_LOCA (muchos cortes), solo si el pedido lo sugiere.
             Guías: valence alto = alegre, bajo = triste o despecho. Reggaetón 85-105 BPM, cumbia 85-105,
             electrónica 120-135, rock 100-140, música para correr 150-175.
@@ -130,6 +143,9 @@ class LlmIntentInterpreter(
                 "minBpm": {"type": "number"},
                 "maxBpm": {"type": "number"},
                 "excludeArtists": {"type": "array", "items": {"type": "string"}},
+                "genres": {"type": "array", "items": {"type": "string"}},
+                "excludeGenres": {"type": "array", "items": {"type": "string"}},
+                "likeArtists": {"type": "array", "items": {"type": "string"}},
                 "mode": {"type": "string", "enum": ["NATURAL", "FIESTA", "HORA_LOCA"]}
               },
               "required": ["label"]

@@ -44,6 +44,8 @@ data class AnalysisEntity(
     val lyricsStatus: String,
     val syncedLrc: String?,
     val featuresFound: Boolean,
+    val genres: String,
+    val artistMbid: String?,
     val tempo: Double?,
     val musicalKey: Int,
     val mode: Int,
