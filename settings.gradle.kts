@@ -18,3 +18,4 @@ rootProject.name = "dj-rodri"
 
 include(":app")
 include(":core:domain")
+include(":core:data")
