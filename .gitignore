@@ -1,0 +1,22 @@
+# Gradle / Android Studio
+.gradle/
+build/
+/local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+.cxx/
+.externalNativeBuild/
+
+# Firmas: nunca en git
+*.jks
+*.keystore
+*.p12
+*.key
+
+# Pesos de modelos (se copian al celular con adb, no se versionan)
+/models/
+
+# Informes y logs del spike sacados del celular con adb pull
+/spike-reports/
