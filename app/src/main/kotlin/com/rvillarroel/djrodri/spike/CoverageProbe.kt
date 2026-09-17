@@ -4,7 +4,7 @@ import com.rvillarroel.djrodri.domain.lyrics.ChorusFinder
 import com.rvillarroel.djrodri.domain.lyrics.LrcParser
 import com.rvillarroel.djrodri.domain.music.CamelotKey
 import com.rvillarroel.djrodri.domain.music.Tempo
-import com.rvillarroel.djrodri.spotify.TrackRef
+import com.rvillarroel.djrodri.data.analysis.SourceTrack
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -34,7 +34,7 @@ data class CoverageResult(
  */
 class CoverageProbe(private val http: OkHttpClient, private val log: SpikeLog) {
 
-    suspend fun run(tracks: List<TrackRef>): CoverageResult = withContext(Dispatchers.IO) {
+    suspend fun run(tracks: List<SourceTrack>): CoverageResult = withContext(Dispatchers.IO) {
         val features = audioFeatures(tracks.map { it.id })
         var lyrics = 0
         var chorus = 0
@@ -70,7 +70,7 @@ class CoverageProbe(private val http: OkHttpClient, private val log: SpikeLog) {
         )
     }
 
-    private fun syncedLyrics(track: TrackRef): String? {
+    private fun syncedLyrics(track: SourceTrack): String? {
         val url = "https://lrclib.net/api/get".toHttpUrl().newBuilder()
             .addQueryParameter("track_name", track.name)
             .addQueryParameter("artist_name", track.artist)

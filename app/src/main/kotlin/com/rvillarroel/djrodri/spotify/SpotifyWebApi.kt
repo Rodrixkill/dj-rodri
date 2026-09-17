@@ -1,70 +1,69 @@
 package com.rvillarroel.djrodri.spotify
 
-import com.rvillarroel.djrodri.spike.SpikeLog
+import com.rvillarroel.djrodri.data.analysis.SourceTrack
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
-data class PlaylistSummary(val id: String, val name: String, val ownerId: String, val total: Int?)
+data class PlaylistSummary(val id: String, val name: String, val ownerId: String, val total: Int?, val imageUrl: String? = null)
 
-data class TrackRef(
-    val id: String,
-    val uri: String,
-    val name: String,
-    val artist: String,
-    val album: String,
-    val durationMs: Long,
-    val isrc: String?,
-)
-
-/** The only thing we need to know about "Tus me gusta" is that it is not a real playlist id. */
+/** "Tus me gusta" is not a real playlist id; the library endpoint stands in for it. */
 const val LIKED_SONGS_ID = "liked"
+
+class SpotifyApiException(val code: Int, message: String) : Exception(message)
 
 /**
  * Just the Web API endpoints still open to dev-mode apps after February 2026.
- * Parsing is deliberately tolerant: that change renamed `tracks`→`items` and `track`→`item`, and the spike should
- * report what really comes back rather than crash on it.
+ * Parsing is deliberately tolerant: that change renamed `tracks`→`items` and `track`→`item`.
  */
-class SpotifyWebApi(private val http: OkHttpClient, private val log: SpikeLog) {
-    var accessToken: String? = null
-
-    suspend fun displayName(): String? = get("/me")?.optString("display_name")
+class SpotifyWebApi(
+    private val http: OkHttpClient,
+    private val token: suspend (forceRefresh: Boolean) -> String?,
+    private val log: (String) -> Unit = { android.util.Log.d("DJRodri", it) },
+) {
+    suspend fun displayName(): String? = get("/me").optString("display_name")
 
     suspend fun myPlaylists(): List<PlaylistSummary> {
-        val json = get("/me/playlists?limit=50") ?: return emptyList()
-        val items = json.optJSONArray("items") ?: return emptyList()
-        return (0 until items.length()).mapNotNull { i ->
-            val p = items.optJSONObject(i) ?: return@mapNotNull null
-            val counts = p.optJSONObject("items") ?: p.optJSONObject("tracks")
-            PlaylistSummary(
-                id = p.optString("id"),
-                name = p.optString("name"),
-                ownerId = p.optJSONObject("owner")?.optString("id").orEmpty(),
-                total = counts?.optInt("total"),
-            )
+        val result = mutableListOf<PlaylistSummary>()
+        var path: String? = "/me/playlists?limit=50"
+        while (path != null) {
+            val json = get(path)
+            val items = json.optJSONArray("items") ?: break
+            for (i in 0 until items.length()) {
+                val p = items.optJSONObject(i) ?: continue
+                val counts = p.optJSONObject("items") ?: p.optJSONObject("tracks")
+                result += PlaylistSummary(
+                    id = p.optString("id"),
+                    name = p.optString("name"),
+                    ownerId = p.optJSONObject("owner")?.optString("id").orEmpty(),
+                    total = counts?.optInt("total"),
+                    imageUrl = p.optJSONArray("images")?.optJSONObject(0)?.optString("url"),
+                )
+            }
+            path = nextPath(json)
         }
+        return result
     }
 
-    /** First [limit] songs of a playlist (or of "Tus me gusta"), skipping episodes and local files. */
-    suspend fun tracks(playlistId: String, limit: Int = 100): List<TrackRef> {
-        val result = mutableListOf<TrackRef>()
-        var offset = 0
-        while (result.size < limit) {
-            val path = if (playlistId == LIKED_SONGS_ID) "/me/tracks?limit=50&offset=$offset"
-            else "/playlists/$playlistId/items?limit=50&offset=$offset"
-            val json = get(path) ?: break
+    /** Songs of a playlist (or of "Tus me gusta"), skipping episodes and local files. */
+    suspend fun tracks(playlistId: String, limit: Int = Int.MAX_VALUE): List<SourceTrack> {
+        val result = mutableListOf<SourceTrack>()
+        var path: String? = if (playlistId == LIKED_SONGS_ID) "/me/tracks?limit=50" else "/playlists/$playlistId/items?limit=50"
+        while (path != null && result.size < limit) {
+            val json = get(path)
             val items = json.optJSONArray("items") ?: break
-            if (offset == 0 && playlistId != LIKED_SONGS_ID && items.length() == 0) {
-                log.add("La playlist devolvió 0 canciones: ¿no es tuya ni colaborativa?")
+            if (result.isEmpty() && playlistId != LIKED_SONGS_ID && items.length() == 0) {
+                log("La playlist devolvió 0 canciones: ¿no es tuya ni colaborativa?")
             }
             for (i in 0 until items.length()) {
                 val entry = items.optJSONObject(i) ?: continue
                 val track = entry.optJSONObject("item") ?: entry.optJSONObject("track") ?: continue
                 if (track.optString("type") != "track" || track.optString("id").isEmpty()) continue
-                result += TrackRef(
+                result += SourceTrack(
                     id = track.optString("id"),
                     uri = track.optString("uri"),
                     name = track.optString("name"),
@@ -74,38 +73,47 @@ class SpotifyWebApi(private val http: OkHttpClient, private val log: SpikeLog) {
                     isrc = track.optJSONObject("external_ids")?.optString("isrc")?.takeIf { it.isNotBlank() },
                 )
             }
-            if (json.isNull("next") || items.length() == 0) break
-            offset += 50
+            path = nextPath(json)
         }
         return result.take(limit)
     }
 
-    /** Fallback path if App Remote fails: skip through the Web API, returning the HTTP code. */
-    suspend fun skipNext(): Int = send(Request.Builder().url("$BASE/me/player/next").post(ByteArray(0).toRequestBody()))
-
-    private suspend fun get(path: String): JSONObject? = withContext(Dispatchers.IO) {
-        val token = accessToken ?: run { log.add("Web API: no hay token, primero inicia sesión"); return@withContext null }
-        val request = Request.Builder().url("$BASE$path").header("Authorization", "Bearer $token").build()
-        http.newCall(request).execute().use { response ->
-            val body = response.body!!.string()
-            if (!response.isSuccessful) {
-                // 429 now says QUOTA_EXCEEDED when the shared developer quota runs out.
-                log.add("Web API GET $path → ${response.code} retry-after=${response.header("Retry-After")} ${body.take(200)}")
-                return@withContext null
-            }
-            JSONObject(body)
-        }
+    /** Fallback if App Remote fails: skip through the Web API. Returns the HTTP code. */
+    suspend fun skipNext(): Int = withContext(Dispatchers.IO) {
+        val bearer = token(false) ?: return@withContext 401
+        val request = Request.Builder().url("$BASE/me/player/next").post(ByteArray(0).toRequestBody())
+            .header("Authorization", "Bearer $bearer").build()
+        http.newCall(request).execute().use { it.code }
     }
 
-    private suspend fun send(builder: Request.Builder): Int = withContext(Dispatchers.IO) {
-        val token = accessToken ?: return@withContext -1
-        http.newCall(builder.header("Authorization", "Bearer $token").build()).execute().use { response ->
-            if (!response.isSuccessful) log.add("Web API → ${response.code} ${response.body!!.string().take(200)}")
-            response.code
+    private fun nextPath(json: JSONObject): String? =
+        json.optString("next").takeIf { it.isNotEmpty() && it != "null" }?.removePrefix(BASE)
+
+    private suspend fun get(path: String): JSONObject = withContext(Dispatchers.IO) {
+        var forceRefresh = false
+        repeat(MAX_ATTEMPTS) { attempt ->
+            val bearer = token(forceRefresh) ?: throw SpotifyApiException(401, "Inicia sesión en Spotify")
+            val request = Request.Builder().url("$BASE$path").header("Authorization", "Bearer $bearer").build()
+            http.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                when {
+                    response.isSuccessful -> return@withContext JSONObject(body)
+                    response.code == 401 && !forceRefresh -> forceRefresh = true
+                    response.code == 429 && attempt < MAX_ATTEMPTS - 1 -> {
+                        // 429 says QUOTA_EXCEEDED when the shared developer quota runs out; waiting is all we can do.
+                        val waitSec = response.header("Retry-After")?.toLongOrNull() ?: 5
+                        log("Spotify pidió esperar $waitSec s (429): ${body.take(120)}")
+                        delay(waitSec.coerceAtMost(60) * 1_000)
+                    }
+                    else -> throw SpotifyApiException(response.code, "Spotify respondió ${response.code} en $path")
+                }
+            }
         }
+        throw SpotifyApiException(429, "Spotify sigue limitando las consultas, prueba en un rato")
     }
 
     private companion object {
         const val BASE = "https://api.spotify.com/v1"
+        const val MAX_ATTEMPTS = 3
     }
 }

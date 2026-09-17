@@ -11,7 +11,8 @@ import com.rvillarroel.djrodri.spotify.LIKED_SONGS_ID
 import com.rvillarroel.djrodri.spotify.PlaylistSummary
 import com.rvillarroel.djrodri.spotify.RemoteController
 import com.rvillarroel.djrodri.spotify.SpotifyWebApi
-import com.rvillarroel.djrodri.spotify.TrackRef
+import com.rvillarroel.djrodri.data.analysis.SourceTrack
+import com.rvillarroel.djrodri.container
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -30,15 +31,17 @@ import kotlin.math.abs
  */
 class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     val log = SpikeLog()
-    private val http = OkHttpClient()
-    val webApi = SpotifyWebApi(http, log)
-    val remote = RemoteController(log)
+    private val container = app.container
+    private val http: OkHttpClient = container.http
+    val webApi: SpotifyWebApi = container.webApi
+    // The app's own connection: a second App Remote connection would fight the party for the player.
+    val remote: RemoteController = container.remote
     private val coverage = CoverageProbe(http, log)
 
     val userName = MutableStateFlow<String?>(null)
     val playlists = MutableStateFlow<List<PlaylistSummary>>(emptyList())
     val selectedPlaylist = MutableStateFlow<PlaylistSummary?>(null)
-    val tracks = MutableStateFlow<List<TrackRef>>(emptyList())
+    val tracks = MutableStateFlow<List<SourceTrack>>(emptyList())
     val busy = MutableStateFlow<String?>(null)
     val reportPath = MutableStateFlow<String?>(null)
 
@@ -53,19 +56,21 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- 1. Login + App Remote --------------------------------------------------------------------------------
 
-    fun onLogin(token: String?, error: String?) {
-        if (token == null) {
-            authSummary = "FALLÓ: $error"
-            log.add("Login Web API FALLÓ: $error")
-            return
-        }
-        authSummary = "OK (PKCE)"
-        webApi.accessToken = token
-        log.add("Login Web API OK")
+    init {
+        remote.logger = { log.add(it) }
         viewModelScope.launch {
-            userName.value = webApi.displayName()
-            playlists.value = listOf(PlaylistSummary(LIKED_SONGS_ID, "Tus me gusta", "", null)) + webApi.myPlaylists()
-            log.add("Playlists visibles: ${playlists.value.size - 1}")
+            val token = container.auth.accessToken()
+            if (token == null) {
+                authSummary = "sin sesión"
+                log.add("Web API: sin sesión, inicia sesión desde la pantalla principal")
+                return@launch
+            }
+            authSummary = "OK (PKCE, token renovable)"
+            runCatching {
+                userName.value = webApi.displayName()
+                playlists.value = listOf(PlaylistSummary(LIKED_SONGS_ID, "Tus me gusta", "", null)) + webApi.myPlaylists()
+                log.add("Playlists visibles: ${playlists.value.size - 1}")
+            }.onFailure { log.add("Web API error: ${it.message}") }
         }
     }
 
@@ -81,7 +86,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectPlaylist(playlist: PlaylistSummary) = work("Cargando canciones…") {
         selectedPlaylist.value = playlist
-        tracks.value = webApi.tracks(playlist.id)
+        tracks.value = webApi.tracks(playlist.id, limit = 100)
         log.add("${playlist.name}: ${tracks.value.size} canciones, ${tracks.value.count { it.isrc != null }} con ISRC")
     }
 
@@ -227,6 +232,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
-        remote.disconnect()
+        // The connection belongs to the app; only stop writing into this screen's log.
+        remote.logger = { android.util.Log.d("DJRodri", it) }
     }
 }

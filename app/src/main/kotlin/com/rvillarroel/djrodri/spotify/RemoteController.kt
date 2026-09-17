@@ -4,7 +4,6 @@ import android.content.Context
 import android.os.SystemClock
 import com.rvillarroel.djrodri.BuildConfig
 import com.rvillarroel.djrodri.domain.playback.PlaybackSnapshot
-import com.rvillarroel.djrodri.spike.SpikeLog
 import com.spotify.android.appremote.api.ConnectionParams
 import com.spotify.android.appremote.api.Connector
 import com.spotify.android.appremote.api.SpotifyAppRemote
@@ -23,7 +22,7 @@ data class NowPlaying(val track: Track, val snapshot: PlaybackSnapshot)
  * Thin wrapper over App Remote: turns its callbacks into a StateFlow and stamps every PlayerState
  * with the moment it arrived, which is what the cut measurements are built on.
  */
-class RemoteController(private val log: SpikeLog) {
+class RemoteController(var logger: (String) -> Unit = { android.util.Log.d("DJRodri", it) }) {
     private var remote: SpotifyAppRemote? = null
 
     private val _nowPlaying = MutableStateFlow<NowPlaying?>(null)
@@ -37,7 +36,7 @@ class RemoteController(private val log: SpikeLog) {
 
     fun connect(context: Context) {
         if (!SpotifyAppRemote.isSpotifyInstalled(context)) {
-            log.add("App Remote: Spotify no está instalado")
+            logger("App Remote: Spotify no está instalado")
             return
         }
         val params = ConnectionParams.Builder(BuildConfig.SPOTIFY_CLIENT_ID)
@@ -45,20 +44,20 @@ class RemoteController(private val log: SpikeLog) {
             .showAuthView(true)
             .build()
         val startedAt = SystemClock.elapsedRealtime()
-        log.add("App Remote: conectando…")
+        logger("App Remote: conectando…")
         SpotifyAppRemote.connect(context, params, object : Connector.ConnectionListener {
             override fun onConnected(appRemote: SpotifyAppRemote) {
                 remote = appRemote
                 _connected.value = true
-                log.add("App Remote: CONECTADO en ${SystemClock.elapsedRealtime() - startedAt} ms")
+                logger("App Remote: CONECTADO en ${SystemClock.elapsedRealtime() - startedAt} ms")
                 appRemote.playerApi.subscribeToPlayerState()
                     .setEventCallback(::onPlayerState)
-                    .setErrorCallback { log.add("App Remote: error en la suscripción: $it") }
+                    .setErrorCallback { logger("App Remote: error en la suscripción: $it") }
             }
 
             override fun onFailure(error: Throwable) {
                 _connected.value = false
-                log.add("App Remote: FALLÓ la conexión: ${error.javaClass.simpleName}: ${error.message}")
+                logger("App Remote: FALLÓ la conexión: ${error.javaClass.simpleName}: ${error.message}")
             }
         })
     }
@@ -75,7 +74,7 @@ class RemoteController(private val log: SpikeLog) {
         val track = state.track
         if (track == null) {
             // Issue #386 (Aug 2026): newer Spotify builds may stop sending track info. This is the line to look for.
-            log.add("PlayerState SIN canción (pos=${state.playbackPosition}, pausa=${state.isPaused})")
+            logger("PlayerState SIN canción (pos=${state.playbackPosition}, pausa=${state.isPaused})")
             return
         }
         val previous = _nowPlaying.value
@@ -84,9 +83,9 @@ class RemoteController(private val log: SpikeLog) {
             PlaybackSnapshot(track.uri, state.playbackPosition, now, state.isPaused, state.playbackSpeed.takeIf { it > 0f } ?: 1f),
         )
         if (previous?.track?.uri != track.uri) {
-            log.add("♪ ${track.name} — ${track.artist?.name} (${track.duration / 1000}s) pos=${state.playbackPosition}")
+            logger("♪ ${track.name} — ${track.artist?.name} (${track.duration / 1000}s) pos=${state.playbackPosition}")
         } else {
-            log.add("estado: pos=${state.playbackPosition} pausa=${state.isPaused}")
+            logger("estado: pos=${state.playbackPosition} pausa=${state.isPaused}")
         }
     }
 
@@ -103,8 +102,8 @@ class RemoteController(private val log: SpikeLog) {
     suspend fun playerState(): PlayerState? = await { it.playerApi.playerState }
 
     private fun call(label: String, block: (SpotifyAppRemote) -> CallResult<*>): Boolean {
-        val r = remote ?: run { log.add("$label: App Remote no está conectado"); return false }
-        block(r).setErrorCallback { log.add("$label → ERROR ${it.message}") }
+        val r = remote ?: run { logger("$label: App Remote no está conectado"); return false }
+        block(r).setErrorCallback { logger("$label → ERROR ${it.message}") }
         return true
     }
 
@@ -114,7 +113,7 @@ class RemoteController(private val log: SpikeLog) {
             block(r)
                 .setResultCallback { if (continuation.isActive) continuation.resume(it) }
                 .setErrorCallback {
-                    log.add("App Remote → ERROR ${it.message}")
+                    logger("App Remote → ERROR ${it.message}")
                     if (continuation.isActive) continuation.resume(null)
                 }
         }

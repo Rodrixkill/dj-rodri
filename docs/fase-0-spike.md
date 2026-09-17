@@ -1,6 +1,6 @@
 # Fase 0: spike de validación
 
-Antes de construir el DJ hay que responder en tu celular si Spotify se puede controlar con la precisión necesaria y si tus canciones tienen datos para analizarlas. Cada prueba deja números en el log y el botón **Guardar informe** los junta.
+Las pruebas están en la app, en **Ajustes → Laboratorio**. Hay que responder en tu celular si Spotify se puede controlar con la precisión necesaria y si tus canciones tienen datos para analizarlas. Cada prueba deja números en el log y el botón **Guardar informe** los junta.
 
 ## Antes de empezar
 - Spotify instalado y con sesión iniciada (Premium).
@@ -23,6 +23,7 @@ Antes de construir el DJ hay que responder en tu celular si Spotify se puede con
 | 10 | **Siguiente vía Web API** | ¿Sirve el respaldo si App Remote falla, y con qué latencia? |
 | 11 | Elige tu playlist de fiesta → **Analizar cobertura (30)** | % de canciones con ISRC, letra sincronizada, coro detectado, BPM y tonalidad. |
 | 12 | Bloquea la pantalla 2 min con música → vuelve → **⏭** | ¿Sigue conectado con la pantalla bloqueada? |
+| 14 | Haz una fiesta de prueba de 30 min con la app completa, en modo Fiesta | ¿Los cortes caen en buen momento? ¿Cuántas veces saltaste tú? (Ajustes → Tus datos) |
 | 13 | **Guardar informe** y ejecuta en el PC el `adb pull` que aparece | El informe llega a `spike-reports/`. |
 
 ## Cómo decidimos con los números

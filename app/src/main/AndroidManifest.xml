@@ -1,11 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Personal app, never published: asked once so HyperOS does not kill a party. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
+        android:name=".DjRodriApplication"
         android:allowBackup="false"
-        android:label="DJ Rodri (spike)"
+        android:icon="@drawable/ic_launcher"
+        android:label="DJ Rodri"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
 
@@ -33,5 +42,43 @@
                     android:scheme="djrodri" />
             </intent-filter>
         </activity>
+
+        <!-- The DJ controls another app's playback; no standard foreground type describes that. -->
+        <service
+            android:name=".party.PartyService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Controla la reproducción de Spotify durante una fiesta (cortes y cambios de canción programados)" />
+        </service>
+
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <service
+            android:name=".surfaces.PartyTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_dj"
+            android:label="DJ Rodri"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".surfaces.PartyWidgetReceiver"
+            android:exported="true"
+            android:label="DJ Rodri">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/party_widget_info" />
+        </receiver>
     </application>
 </manifest>
