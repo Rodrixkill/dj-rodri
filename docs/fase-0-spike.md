@@ -6,7 +6,7 @@ Las pruebas están en la app, en **Ajustes → Laboratorio**. Hay que responder 
 - Spotify instalado y con sesión iniciada (Premium).
 - La app registrada en el panel de Spotify y el Client ID en `local.properties` (ver README).
 - **Recomendado:** activa el crossfade en Spotify (Ajustes → Reproducción) en 6–8 s.
-- **HyperOS:** en Ajustes de DJ Rodri sigue la guía "Que HyperOS no mate la fiesta" (inicio automático, el inicio automático batería sin restricciones y candado en Recientes).
+- **HyperOS:** en Ajustes de DJ Rodri sigue la guía "Que HyperOS no mate la fiesta" (inicio automático, batería sin restricciones y candado en Recientes).
 
 ## Guion (unos 20 minutos)
 | # | Paso | Qué responde |
