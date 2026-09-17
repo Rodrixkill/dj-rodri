@@ -15,6 +15,8 @@ data class TrackProfile(
     val key: CamelotKey? = null,
     /** 0..1, as ReccoBeats/AcousticBrainz report it. */
     val energy: Double? = null,
+    val danceability: Double? = null,
+    val valence: Double? = null,
     val chorus: ChorusAnalysis? = null,
     /** Where you tapped "¡Drop!" while listening. Beats any estimate. */
     val userDropMs: Long? = null,

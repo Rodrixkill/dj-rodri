@@ -74,6 +74,8 @@ dependencies {
     implementation(libs.work.runtime)
     implementation(libs.glance.appwidget)
     implementation(libs.glance.material3)
+    // Local LLM: it only turns your sentence into numbers, and never sees a song.
+    implementation(libs.litertlm)
 
     testImplementation(libs.junit4)
     testImplementation(libs.robolectric)

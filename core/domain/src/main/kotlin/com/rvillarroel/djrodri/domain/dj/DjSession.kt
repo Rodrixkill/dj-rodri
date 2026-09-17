@@ -36,6 +36,10 @@ class DjSession(
     var stats = SessionStats()
         private set
 
+    /** The last thing you asked for ("algo para perrear"), still shaping what comes next. */
+    var intent: DjIntent = DjIntent.Default
+        private set
+
     private var upcoming: MutableList<TrackProfile> = SetBuilder.order(tracks, random = random).toMutableList()
     private val played = ArrayDeque<TrackProfile>()
     private val djTransitions = mutableListOf<Transition>()
@@ -101,6 +105,14 @@ class DjSession(
         replan()
     }
 
+    /** "Pon algo para perrear": reorders what is left, and may change the mode if you asked for something wilder. */
+    fun applyIntent(newIntent: DjIntent) {
+        intent = newIntent
+        newIntent.mode?.let { mode = it }
+        reorderUpcoming()
+        replan()
+    }
+
     fun moreEnergy() = shiftEnergy(+ENERGY_STEP)
 
     fun lessEnergy() = shiftEnergy(-ENERGY_STEP)
@@ -113,15 +125,19 @@ class DjSession(
     /** Switch playlists mid-party: the current song keeps playing and the new set flows from it. */
     fun switchPlaylist(tracks: List<TrackProfile>) {
         val alreadyHeard = played.map { it.id }.toSet() + listOfNotNull(current?.id)
-        val fresh = tracks.filter { it.id !in disliked && it.id !in alreadyHeard }
-        upcoming = SetBuilder.order(fresh, after = current, energyBias = energyBias, random = random).toMutableList()
+        upcoming = tracks.filter { it.id !in disliked && it.id !in alreadyHeard }.toMutableList()
+        reorderUpcoming()
         replan()
     }
 
     private fun shiftEnergy(step: Double) {
         energyBias = (energyBias + step).coerceIn(-MAX_ENERGY_BIAS, MAX_ENERGY_BIAS)
-        upcoming = SetBuilder.order(upcoming, after = current, energyBias = energyBias, random = random).toMutableList()
+        reorderUpcoming()
         replan()
+    }
+
+    private fun reorderUpcoming() {
+        upcoming = SetBuilder.order(upcoming, after = current, energyBias = energyBias, intent = intent, random = random).toMutableList()
     }
 
     private fun advance(recorded: Transition?): PlayCommand? {

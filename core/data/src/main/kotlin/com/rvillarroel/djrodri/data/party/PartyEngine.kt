@@ -1,6 +1,7 @@
 package com.rvillarroel.djrodri.data.party
 
 import com.rvillarroel.djrodri.data.analysis.SourceTrack
+import com.rvillarroel.djrodri.domain.dj.DjIntent
 import com.rvillarroel.djrodri.domain.dj.DjMode
 import com.rvillarroel.djrodri.domain.dj.DjSession
 import com.rvillarroel.djrodri.domain.dj.Entry
@@ -55,6 +56,7 @@ data class PartyState(
     val isPaused: Boolean = false,
     val settings: PartySettings = PartySettings(),
     val stats: SessionStats = SessionStats(),
+    val intent: DjIntent = DjIntent.Default,
     /** Set when Spotify is playing something the DJ did not choose; the DJ stops deciding until you press ⏭. */
     val externalTrackUri: String? = null,
 )
@@ -105,6 +107,14 @@ class PartyEngine(
     fun previous() = act { s -> record(PartyEventKind.PREVIOUS); s.previous()?.let { execute(it) } }
     fun dislike() = act { s -> record(PartyEventKind.DISLIKE); execute(s.dislike()) }
     fun keepFull() = act { s -> record(PartyEventKind.KEEP_FULL); s.keepFull(); publish() }
+    /** What you asked for, already turned into numbers by the rules or the local model. */
+    fun applyIntent(intent: DjIntent) = act { s ->
+        s.applyIntent(intent)
+        // A request like "a fondo" also changes how boldly the DJ cuts.
+        if (s.mode != settings.mode) settings = settings.copy(mode = s.mode)
+        publish()
+    }
+
     fun moreEnergy() = act { s -> s.moreEnergy(); publish() }
     fun lessEnergy() = act { s -> s.lessEnergy(); publish() }
 
@@ -249,6 +259,7 @@ class PartyEngine(
             isPaused = playing?.isPaused ?: false,
             settings = settings,
             stats = s.stats,
+            intent = s.intent,
             externalTrackUri = external,
         )
     }

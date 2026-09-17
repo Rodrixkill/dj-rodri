@@ -6,35 +6,42 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /**
- * Orders a playlist the way a DJ would: each song follows one it goes well with, energy rises and gives the room a
- * breather in waves, and the same artist never plays twice in a row when there is an alternative.
+ * Orders a playlist the way a DJ would: each song follows one it goes well with, the energy moves along the curve
+ * you asked for, what you requested weighs in, and the same artist never plays twice in a row when there is a choice.
  */
 object SetBuilder {
     /** Songs per energy wave: roughly a peak every half hour. */
     private const val WAVE_LENGTH = 10
+
+    /** Songs a build or a wind-down takes to get all the way there. */
+    private const val RAMP_LENGTH = 12
     private const val BASE_ENERGY = 0.6
     private const val WAVE_AMPLITUDE = 0.2
+    private const val RAMP_RANGE = 0.3
     private const val SAME_ARTIST_PENALTY = 0.5
+
     /** Small randomness so the same playlist does not always produce the same night. */
     private const val JITTER = 0.05
 
     /**
      * @param after the song playing now, so the first pick flows from it.
      * @param energyBias shifts the whole curve: positive for "más energía", negative for "más tranqui".
+     * @param intent what you asked the DJ for, already turned into numbers.
      */
     fun order(
         tracks: List<TrackProfile>,
         after: TrackProfile? = null,
         energyBias: Double = 0.0,
+        intent: DjIntent = DjIntent.Default,
         random: Random = Random.Default,
     ): List<TrackProfile> {
         val remaining = tracks.toMutableList()
         val ordered = ArrayList<TrackProfile>(tracks.size)
         var previous = after
         while (remaining.isNotEmpty()) {
-            val target = (targetEnergy(ordered.size) + energyBias).coerceIn(0.0, 1.0)
+            val target = (targetEnergy(ordered.size, intent) + energyBias).coerceIn(0.0, 1.0)
             val prev = previous
-            val best = remaining.maxBy { score(prev, it, target) + random.nextDouble() * JITTER }
+            val best = remaining.maxBy { score(prev, it, target, intent) + random.nextDouble() * JITTER }
             remaining.remove(best)
             ordered += best
             previous = best
@@ -42,13 +49,25 @@ object SetBuilder {
         return ordered
     }
 
-    internal fun targetEnergy(position: Int): Double =
-        BASE_ENERGY + WAVE_AMPLITUDE * sin(2 * PI * position / WAVE_LENGTH)
+    internal fun targetEnergy(position: Int, intent: DjIntent = DjIntent.Default): Double {
+        val base = intent.targetEnergy ?: BASE_ENERGY
+        val progress = (position.toDouble() / RAMP_LENGTH).coerceAtMost(1.0)
+        return when (intent.curve) {
+            EnergyCurve.STEADY -> base
+            EnergyCurve.BUILD -> base - RAMP_RANGE / 2 + RAMP_RANGE * progress
+            EnergyCurve.WAVE -> base + WAVE_AMPLITUDE * sin(2 * PI * position / WAVE_LENGTH)
+            EnergyCurve.WIND_DOWN -> base + RAMP_RANGE / 2 - RAMP_RANGE * progress
+        }.coerceIn(0.0, 1.0)
+    }
 
-    private fun score(previous: TrackProfile?, candidate: TrackProfile, targetEnergy: Double): Double {
+    private fun score(previous: TrackProfile?, candidate: TrackProfile, targetEnergy: Double, intent: DjIntent): Double {
         val energyFit = candidate.energy?.let { 1.0 - abs(it - targetEnergy) } ?: 0.5
-        if (previous == null) return energyFit
+        val intentFit = intent.fit(candidate)
+        if (previous == null) return 0.5 * energyFit + 0.5 * intentFit
         val sameArtist = previous.artist.equals(candidate.artist, ignoreCase = true)
-        return 0.6 * Compatibility.score(previous, candidate) + 0.4 * energyFit - if (sameArtist) SAME_ARTIST_PENALTY else 0.0
+        return 0.4 * Compatibility.score(previous, candidate) +
+            0.25 * energyFit +
+            0.35 * intentFit -
+            if (sameArtist) SAME_ARTIST_PENALTY else 0.0
     }
 }

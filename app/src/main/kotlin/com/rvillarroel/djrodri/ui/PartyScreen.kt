@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,9 +29,12 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rvillarroel.djrodri.container
+import com.rvillarroel.djrodri.data.ai.IntentSource
+import com.rvillarroel.djrodri.data.ai.InterpretedIntent
 import com.rvillarroel.djrodri.domain.dj.DjMode
 import com.rvillarroel.djrodri.domain.dj.Entry
 import com.rvillarroel.djrodri.domain.dj.Exit
@@ -38,10 +42,27 @@ import com.rvillarroel.djrodri.party.PartyService
 import com.rvillarroel.djrodri.party.label
 import com.rvillarroel.djrodri.ui.theme.DjColors
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 class PartyViewModel(app: Application) : AndroidViewModel(app) {
-    val engine = app.container.party
+    private val container = app.container
+    val engine = container.party
     val state = engine.state
+    val thinking = MutableStateFlow(false)
+    val lastRequest = MutableStateFlow<InterpretedIntent?>(null)
+
+    /** Reads your request (local model or rules) and hands the resulting numbers to the DJ. */
+    fun request(text: String) {
+        if (text.isBlank()) return
+        thinking.value = true
+        viewModelScope.launch {
+            val interpreted = container.interpret(text)
+            lastRequest.value = interpreted
+            engine.applyIntent(interpreted.intent)
+            thinking.value = false
+        }
+    }
 }
 
 @Composable
@@ -104,6 +125,8 @@ fun PartyScreen(onBack: () -> Unit, onSwitchPlaylist: () -> Unit, vm: PartyViewM
             BigButton("😌 Más tranqui", engine::lessEnergy, Modifier.weight(1f), color = DjColors.StageRaised)
             BigButton("🔥 Más energía", engine::moreEnergy, Modifier.weight(1f), color = DjColors.Drop)
         }
+
+        RequestPanel(vm, state.intent.label)
         BigButton(
             dropMarkedAt?.let { "¡Drop guardado en ${formatTime(it)}!" } ?: "¡Drop! (toca cuando entra)",
             {
@@ -131,6 +154,44 @@ fun PartyScreen(onBack: () -> Unit, onSwitchPlaylist: () -> Unit, vm: PartyViewM
             SessionStatsRow(state.stats.fullPlays, state.stats.cuts, state.stats.dropEntries, state.stats.manualSkips)
         }
     }
+}
+
+/** "Pon algo para perrear": the only place the local model is used, and it never sees your songs. */
+@Composable
+private fun RequestPanel(vm: PartyViewModel, currentIntentLabel: String) {
+    val thinking by vm.thinking.collectAsStateWithLifecycle()
+    val last by vm.lastRequest.collectAsStateWithLifecycle()
+    var text by remember { mutableStateOf("") }
+
+    Panel {
+        Text("Pídele algo al DJ", style = MaterialTheme.typography.titleMedium)
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            placeholder = { Text("pon algo para perrear, sin Bad Bunny") },
+            singleLine = true,
+            enabled = !thinking,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        BigButton(
+            if (thinking) "Pensando…" else "Pedir",
+            { vm.request(text); text = "" },
+            Modifier.fillMaxWidth(),
+            color = DjColors.Neon,
+            enabled = !thinking && text.isNotBlank(),
+        )
+        Text(
+            "Ahora mismo: $currentIntentLabel" + (last?.let { " · ${sourceLabel(it)}" } ?: ""),
+            color = DjColors.TextDim,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+private fun sourceLabel(result: InterpretedIntent) = when (result.source) {
+    IntentSource.LLM -> "IA local (${result.tookMs / 100 / 10.0} s)"
+    IntentSource.RULES -> "reglas"
+    IntentSource.LLM_FALLBACK -> "reglas (la IA no respondió)"
 }
 
 @Composable

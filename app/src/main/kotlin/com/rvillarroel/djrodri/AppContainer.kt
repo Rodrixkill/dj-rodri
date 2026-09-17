@@ -4,7 +4,12 @@ import android.app.Application
 import android.content.Context
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
+import com.rvillarroel.djrodri.ai.LiteRtLlmEngine
 import com.rvillarroel.djrodri.analysis.AnalysisScheduler
+import com.rvillarroel.djrodri.data.ai.DjContext
+import com.rvillarroel.djrodri.data.ai.InterpretedIntent
+import com.rvillarroel.djrodri.data.ai.LlmIntentInterpreter
+import com.rvillarroel.djrodri.data.ai.RulesIntentInterpreter
 import com.rvillarroel.djrodri.data.analysis.PlaylistAnalyzer
 import com.rvillarroel.djrodri.data.http.PoliteHttp
 import com.rvillarroel.djrodri.data.party.PartyEngine
@@ -28,6 +33,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
+import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
 /**
@@ -57,6 +63,21 @@ class AppContainer(private val context: Context) {
         )
     }
     val analysisScheduler by lazy { AnalysisScheduler(context) }
+
+    val llm by lazy { LiteRtLlmEngine(context) }
+    private val rulesInterpreter = RulesIntentInterpreter()
+    private val llmInterpreter by lazy { LlmIntentInterpreter(llm, rulesInterpreter) }
+
+    /** Your sentence in, numbers out. The model is used only if it is installed and you left it on. */
+    suspend fun interpret(request: String): InterpretedIntent {
+        val djContext = DjContext(
+            hourOfDay = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
+            currentEnergy = party.state.value.intent.targetEnergy,
+            mode = settings.party.value.mode,
+        )
+        val interpreter = if (settings.useLocalAi.value) llmInterpreter else rulesInterpreter
+        return interpreter.interpret(request, djContext)
+    }
 
     val remote = RemoteController()
     val party by lazy {

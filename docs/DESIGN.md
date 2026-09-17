@@ -15,7 +15,7 @@ DJ Rodri es una app Android personal para fiestas (tú y hasta 4 familiares), so
 | Transiciones | **Cortes naturales:** A termina en un límite de frase (fin de coro o inicio del outro) → `skipNext` → **B arranca desde su inicio**, salvo en las "entradas en el drop" (ver Motor DJ). Si el análisis no es confiable, la canción suena **completa**. |
 | Naturalidad | Tope de cortes con reglas anti sobre-mezcla (ver motor). Botón "Completa" para dejar entera la canción actual. |
 | Controles de fiesta | Play/pausa, siguiente, anterior, cambiar de playlist, "Completa", "No va" (no me gusta) y energía ↑/↓, desde la app, la notificación, el widget y el tile. |
-| IA y voz | **Opcionales, al final.** El núcleo no las necesita. Si se agregan: el LLM solo ve datos abiertos y la voz arma un plan que se aplica con un toque ("Dale"). |
+| IA local | El LLM (LiteRT-LM) traduce tu pedido a números y nunca ve tus canciones; un intérprete por palabras clave es el respaldo. Ver `docs/ia-local.md`. |
 | Spotify | App Remote 0.8.0 (AAR, sin mantenimiento) para controlar y auth 5.0.0 con PKCE. Endpoints de reproductor de la Web API como respaldo. |
 
 ## Verificación de Spotify (17-sep-2026)

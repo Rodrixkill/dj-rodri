@@ -16,6 +16,15 @@ class SettingsRepository(context: Context) {
     private val _hyperOsGuideDone = MutableStateFlow(prefs.getBoolean(KEY_GUIDE, false))
     val hyperOsGuideDone: StateFlow<Boolean> = _hyperOsGuideDone
 
+    /** Use the local model to read your requests. Off means the keyword rules, which are instant. */
+    private val _useLocalAi = MutableStateFlow(prefs.getBoolean(KEY_LOCAL_AI, true))
+    val useLocalAi: StateFlow<Boolean> = _useLocalAi
+
+    fun setUseLocalAi(use: Boolean) {
+        prefs.edit().putBoolean(KEY_LOCAL_AI, use).apply()
+        _useLocalAi.value = use
+    }
+
     val lastPlaylistId: String? get() = prefs.getString(KEY_LAST_PLAYLIST, null)
 
     fun updateParty(settings: PartySettings) {
@@ -45,6 +54,7 @@ class SettingsRepository(context: Context) {
         const val KEY_DROP_PAUSE = "drop_with_pause"
         const val KEY_CUT_LEAD = "cut_lead_ms"
         const val KEY_GUIDE = "hyperos_guide_done"
+        const val KEY_LOCAL_AI = "use_local_ai"
         const val KEY_LAST_PLAYLIST = "last_playlist"
     }
 }
