@@ -42,7 +42,37 @@ class CueEstimatorTest {
     }
 
     @Test
-    fun `without lyrics there is nowhere safe to cut`() {
-        assertTrue(CueEstimator.estimate(song("a", chorusConfidence = null)).cuts.isEmpty())
+    fun `an instrumental track is cut on a phrase boundary, because that is where the music turns`() {
+        // 128 BPM: a bar lasts 1875 ms and a phrase of eight bars, 15 s.
+        val edm = song("edm", chorusConfidence = null, bpm = 128.0, durationMs = 300_000)
+
+        val cuts = CueEstimator.estimate(edm).cuts
+
+        assertEquals(2, cuts.size)
+        cuts.forEach { cut -> assertEquals(0L, cut.positionMs % 15_000, "no cae en una frase: ${cut.positionMs}") }
+        assertEquals(180_000L, cuts.first().positionMs)
+        assertTrue(cuts.first().confidence >= DjMode.FIESTA.minCutConfidence)
+    }
+
+    @Test
+    fun `a guessed drop is never confident enough to jump into`() {
+        val edm = song("edm", chorusConfidence = null, bpm = 128.0, durationMs = 300_000)
+
+        val drop = CueEstimator.estimate(edm).drop!!
+
+        assertEquals(75_000L, drop.positionMs)
+        assertTrue(drop.confidence < TransitionPlanner.MIN_DROP_CONFIDENCE)
+    }
+
+    @Test
+    fun `your tap still beats any guess`() {
+        val edm = song("edm", chorusConfidence = null, bpm = 128.0, userDropMs = 61_500)
+
+        assertEquals(CuePoint(61_500, 1.0), CueEstimator.estimate(edm).drop)
+    }
+
+    @Test
+    fun `without lyrics and without tempo there is nowhere safe to cut`() {
+        assertTrue(CueEstimator.estimate(song("a", chorusConfidence = null, bpm = null)).cuts.isEmpty())
     }
 }

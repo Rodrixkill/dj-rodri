@@ -4,6 +4,7 @@ import com.rvillarroel.djrodri.data.analysis.SourceTrack
 import com.rvillarroel.djrodri.domain.dj.DjIntent
 import com.rvillarroel.djrodri.domain.dj.DjMode
 import com.rvillarroel.djrodri.domain.dj.DjSession
+import com.rvillarroel.djrodri.domain.dj.DjSessionState
 import com.rvillarroel.djrodri.domain.dj.Entry
 import com.rvillarroel.djrodri.domain.dj.Exit
 import com.rvillarroel.djrodri.domain.dj.PlayCommand
@@ -37,6 +38,30 @@ data class PartySettings(
 
 enum class PartyEventKind { FULL, CUT, DROP_ENTRY, SKIP, PREVIOUS, DISLIKE, KEEP_FULL, EXTERNAL_CHANGE }
 
+/**
+ * A party frozen on disk. HyperOS kills background apps without asking, so the party is saved on every song and
+ * every few seconds: reopening the app offers to carry on from the exact song and second.
+ */
+data class PartySnapshot(
+    val sessionId: Long,
+    val playlistId: String,
+    val settings: PartySettings,
+    val currentTrackId: String,
+    val positionMs: Long,
+    val upcomingIds: List<String>,
+    val playedIds: List<String>,
+    val transitions: List<Transition>,
+    val stats: SessionStats,
+    val intent: DjIntent,
+    val savedAtMs: Long,
+)
+
+interface PartySnapshotStore {
+    suspend fun save(snapshot: PartySnapshot)
+    suspend fun load(): PartySnapshot?
+    suspend fun clear()
+}
+
 /** Persistence for what happens at a party. The app implements it with Room. */
 interface PartyRecorder {
     suspend fun sessionStarted(playlistId: String, mode: DjMode, atMs: Long): Long
@@ -69,6 +94,7 @@ data class PartyState(
 class PartyEngine(
     private val player: PlayerPort,
     private val recorder: PartyRecorder,
+    private val snapshots: PartySnapshotStore,
     private val scope: CoroutineScope,
     private val clock: () -> Long,
     private val random: Random = Random.Default,
@@ -87,6 +113,7 @@ class PartyEngine(
     private var settings = PartySettings()
     private var lastCommandAtMs = 0L
     private var external: String? = null
+    private var lastSnapshotAtMs = 0L
     private var ticker: Job? = null
 
     suspend fun start(playlistId: String, playlist: List<PartyTrack>, settings: PartySettings) = lock.withLock {
@@ -98,6 +125,50 @@ class PartyEngine(
         sessionId = recorder.sessionStarted(playlistId, settings.mode, clock())
         _state.value = PartyState(active = true, playlistId = playlistId, settings = settings)
         execute(newSession.start())
+        startTicker()
+    }
+
+    /**
+     * Carries on a party the system killed: same order, same song, same second, same cut budget.
+     * Songs missing from the playlist now (removed since) are simply dropped from what is left.
+     */
+    suspend fun resume(snapshot: PartySnapshot, playlist: List<PartyTrack>): Boolean = lock.withLock {
+        stopTicker()
+        tracks = playlist.associateBy { it.source.id }
+        val profiles = tracks.mapValues { it.value.profile }
+        val current = profiles[snapshot.currentTrackId] ?: return@withLock false
+        settings = snapshot.settings
+        sessionId = snapshot.sessionId
+        session = DjSession(
+            tracks = profiles.values.toList(),
+            mode = snapshot.settings.mode,
+            random = random,
+            restored = DjSessionState(
+                current = current,
+                upcoming = snapshot.upcomingIds.mapNotNull { profiles[it] },
+                played = snapshot.playedIds.mapNotNull { profiles[it] },
+                transitions = snapshot.transitions,
+                stats = snapshot.stats,
+                intent = snapshot.intent,
+            ),
+        )
+        _state.value = PartyState(active = true, playlistId = snapshot.playlistId, settings = settings)
+
+        val uri = uriOf(current.id)
+        val playing = player.state.value
+        if (playing?.trackUri != uri) {
+            // Spotify moved on (or stopped) while the app was dead: pick the song up where it was left.
+            lastCommandAtMs = clock()
+            player.play(uri)
+            withTimeoutOrNull(SWITCH_TIMEOUT_MS) { player.state.first { it?.trackUri == uri } }
+            if (snapshot.positionMs > 0) player.seekTo(snapshot.positionMs)
+        }
+        publish()
+        startTicker()
+        true
+    }
+
+    private fun startTicker() {
         ticker = scope.launch {
             while (isActive) {
                 delay(tickMs)
@@ -201,6 +272,7 @@ class PartyEngine(
                 execute(s.onTrackEnded())
             }
         }
+        if (clock() - lastSnapshotAtMs >= SNAPSHOT_EVERY_MS) saveSnapshot()
         publish()
     }
 
@@ -223,12 +295,38 @@ class PartyEngine(
         }
         publish()
         session?.let { recorder.statsChanged(sessionId, it.stats, null) }
+        saveSnapshot()
+    }
+
+    /** Saved on every song and every few seconds, so a killed app loses seconds, not the party. */
+    private suspend fun saveSnapshot() {
+        val s = session ?: return
+        val state = s.snapshot()
+        val current = state.current ?: return
+        lastSnapshotAtMs = clock()
+        snapshots.save(
+            PartySnapshot(
+                sessionId = sessionId,
+                playlistId = _state.value.playlistId ?: return,
+                settings = settings,
+                currentTrackId = current.id,
+                positionMs = player.state.value?.takeIf { it.trackUri == uriOf(current.id) }?.positionAt(clock()) ?: 0,
+                upcomingIds = state.upcoming.map { it.id },
+                playedIds = state.played.map { it.id },
+                transitions = state.transitions,
+                stats = state.stats,
+                intent = state.intent,
+                savedAtMs = clock(),
+            ),
+        )
     }
 
     private suspend fun finish() {
         val s = session ?: return
         stopTicker()
         recorder.statsChanged(sessionId, s.stats, clock())
+        // A party that ended on purpose must not be offered again when the app opens.
+        snapshots.clear()
         session = null
         _state.value = _state.value.copy(active = false, current = null, next = null, plan = null, stats = s.stats)
     }
@@ -273,5 +371,6 @@ class PartyEngine(
         const val SWITCH_GRACE_MS = 3_000L
         const val SWITCH_TIMEOUT_MS = 3_000L
         const val STOPPED_AT_END_MS = 1_500L
+        const val SNAPSHOT_EVERY_MS = 10_000L
     }
 }

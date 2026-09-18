@@ -18,10 +18,21 @@ data class SessionStats(
  * One party: the virtual queue and every control you have over it. Pure state, no Spotify, no clock —
  * the adapter reports what happened ([onCutPointReached], [onTrackEnded]) and executes the returned [PlayCommand].
  */
+/** Everything a session is, so a party killed by the system can carry on exactly where it was. */
+data class DjSessionState(
+    val current: TrackProfile?,
+    val upcoming: List<TrackProfile>,
+    val played: List<TrackProfile>,
+    val transitions: List<Transition>,
+    val stats: SessionStats,
+    val intent: DjIntent,
+)
+
 class DjSession(
     tracks: List<TrackProfile>,
     mode: DjMode = DjMode.FIESTA,
     private val random: Random = Random.Default,
+    restored: DjSessionState? = null,
 ) {
     var mode: DjMode = mode
         private set
@@ -49,6 +60,21 @@ class DjSession(
 
     val upNext: TrackProfile? get() = upcoming.firstOrNull()
     val queue: List<TrackProfile> get() = upcoming.toList()
+
+    init {
+        if (restored != null) {
+            upcoming = restored.upcoming.toMutableList()
+            played.addAll(restored.played)
+            djTransitions += restored.transitions
+            current = restored.current
+            stats = restored.stats
+            intent = restored.intent
+            replan()
+        }
+    }
+
+    /** A picture of the session to store; [DjSession] takes it back through `restored`. */
+    fun snapshot() = DjSessionState(current, upcoming.toList(), played.toList(), djTransitions.toList(), stats, intent)
 
     fun start(): PlayCommand? {
         val first = upcoming.removeFirstOrNull() ?: return null

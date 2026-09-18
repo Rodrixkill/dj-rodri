@@ -1,6 +1,8 @@
 package com.rvillarroel.djrodri.ui
 
+import android.app.Activity
 import android.app.Application
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -25,6 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rvillarroel.djrodri.container
+import com.rvillarroel.djrodri.data.party.PartySnapshot
 import com.rvillarroel.djrodri.library.db.PlaylistWithProgress
 import com.rvillarroel.djrodri.ui.theme.DjColors
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,16 +36,36 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class PlaylistsViewModel(app: Application) : AndroidViewModel(app) {
-    private val library = app.container.library
+    private val container = app.container
+    private val library = container.library
     val playlists = library.playlists.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val refreshing = MutableStateFlow(false)
     val error = MutableStateFlow<String?>(null)
-    val party = app.container.party.state
+    val party = container.party.state
+
+    /** A party HyperOS killed, ready to carry on. */
+    val resumable = MutableStateFlow<PartySnapshot?>(null)
+    val resuming = MutableStateFlow(false)
 
     fun refresh() = viewModelScope.launch {
         refreshing.value = true
         error.value = runCatching { library.refreshPlaylists() }.exceptionOrNull()?.let { it.message ?: "No se pudieron leer tus playlists" }
         refreshing.value = false
+    }
+
+    fun checkResumable() = viewModelScope.launch { resumable.value = container.restorableParty() }
+
+    fun resume(activity: Activity, onResumed: () -> Unit) = viewModelScope.launch {
+        resuming.value = true
+        val failure = container.resumeParty(activity)
+        resuming.value = false
+        error.value = failure
+        if (failure == null) onResumed() else resumable.value = container.restorableParty()
+    }
+
+    fun forget() = viewModelScope.launch {
+        container.forgetParty()
+        resumable.value = null
     }
 }
 
@@ -52,9 +75,15 @@ fun PlaylistsScreen(onOpen: (String) -> Unit, onParty: () -> Unit, onSettings: (
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val party by vm.party.collectAsStateWithLifecycle()
+    val resumable by vm.resumable.collectAsStateWithLifecycle()
+    val resuming by vm.resuming.collectAsStateWithLifecycle()
+    val activity = LocalActivity.current
 
-    // First visit: the local copy is empty, fetch it once.
-    LaunchedEffect(Unit) { if (vm.playlists.value.isEmpty()) vm.refresh() }
+    // First visit: the local copy is empty, fetch it once. A killed party is looked for every time you come back.
+    LaunchedEffect(Unit) {
+        if (vm.playlists.value.isEmpty()) vm.refresh()
+        vm.checkResumable()
+    }
 
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
@@ -65,6 +94,26 @@ fun PlaylistsScreen(onOpen: (String) -> Unit, onParty: () -> Unit, onSettings: (
                 Panel(Modifier.clickable(onClick = onParty)) {
                     Text("🎧 Fiesta en curso", style = MaterialTheme.typography.titleMedium, color = DjColors.Drop)
                     Text(party.current?.let { "${it.name} — ${it.artist}" } ?: "", color = DjColors.TextDim)
+                }
+            }
+        } else {
+            resumable?.let { snapshot ->
+                item {
+                    Panel {
+                        Text("Fiesta interrumpida", style = MaterialTheme.typography.titleMedium, color = DjColors.Warning)
+                        Text(
+                            "Quedó a medias hace ${minutesAgo(snapshot.savedAtMs)} min, con ${snapshot.upcomingIds.size} canciones por delante.",
+                            color = DjColors.TextDim,
+                        )
+                        BigButton(
+                            if (resuming) "Retomando…" else "▶ Retomar donde quedó",
+                            { activity?.let { a -> vm.resume(a, onParty) } },
+                            Modifier.fillMaxWidth(),
+                            color = DjColors.Drop,
+                            enabled = !resuming,
+                        )
+                        TextButton(onClick = vm::forget) { Text("Descartarla", color = DjColors.TextDim) }
+                    }
                 }
             }
         }
@@ -104,3 +153,5 @@ private fun PlaylistRow(playlist: PlaylistWithProgress, onClick: () -> Unit) {
         }
     }
 }
+
+private fun minutesAgo(atMs: Long): Long = ((System.currentTimeMillis() - atMs) / 60_000).coerceAtLeast(1)

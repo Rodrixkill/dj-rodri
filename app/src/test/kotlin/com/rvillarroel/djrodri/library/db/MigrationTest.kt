@@ -66,6 +66,18 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun `the table that carries a party across a kill is added empty, without touching the rest`() {
+        helper.createDatabase(version = 2).use { db ->
+            db.execSQL("INSERT INTO drop_mark (trackId, positionMs, markedAtMs) VALUES ('t1', 52300, 10)")
+        }
+
+        helper.runMigrationsAndValidate(version = 3, migrations = listOf(DjDatabase.MIGRATION_2_3)).use { db ->
+            db.readRow("SELECT COUNT(*) FROM party_snapshot") { assertEquals(0, it.getInt(0)) }
+            db.readRow("SELECT positionMs FROM drop_mark") { assertEquals(52_300L, it.getLong(0)) }
+        }
+    }
+
     private fun SQLiteConnection.readRow(sql: String, assertions: (androidx.sqlite.SQLiteStatement) -> Unit) {
         prepare(sql).use { statement ->
             assertTrue("sin filas: $sql", statement.step())

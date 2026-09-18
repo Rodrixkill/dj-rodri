@@ -54,6 +54,14 @@ class PartyEngineTest {
         }
     }
 
+    private class MemorySnapshots : PartySnapshotStore {
+        var saved: PartySnapshot? = null
+        var cleared = false
+        override suspend fun save(snapshot: PartySnapshot) { saved = snapshot; cleared = false }
+        override suspend fun load() = saved
+        override suspend fun clear() { saved = null; cleared = true }
+    }
+
     private class MemoryRecorder : PartyRecorder {
         val events = mutableListOf<Pair<String, PartyEventKind>>()
         val drops = mutableMapOf<String, Long>()
@@ -87,7 +95,8 @@ class PartyEngineTest {
         val playlist = (1..size).map { factory("t$it") }
         val player = FakePlayer({ scope.testScheduler.currentTime }, playlist.associate { it.source.uri to it.source.durationMs })
         val recorder = MemoryRecorder()
-        val engine = PartyEngine(player, recorder, scope.backgroundScope, { scope.testScheduler.currentTime }, Random(1))
+        val snapshots = MemorySnapshots()
+        val engine = PartyEngine(player, recorder, snapshots, scope.backgroundScope, { scope.testScheduler.currentTime }, Random(1))
         val currentUri get() = engine.state.value.current?.uri
     }
 
@@ -206,6 +215,69 @@ class PartyEngineTest {
         runCurrent()
 
         assertTrue(h.currentUri != first)
+    }
+
+    @Test
+    fun `a killed party is saved with the song, the second and the budget it had`() = runTest {
+        val h = harness()
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.HORA_LOCA))
+        advanceTimeBy(durationMs + 30_000)
+        runCurrent()
+
+        val snapshot = h.snapshots.saved!!
+
+        assertEquals("pl", snapshot.playlistId)
+        assertEquals(h.engine.state.value.current!!.id, snapshot.currentTrackId)
+        assertEquals(30_000L, snapshot.positionMs)
+        assertEquals(1, snapshot.transitions.size)
+        assertEquals(h.playlist.size - 2, snapshot.upcomingIds.size)
+    }
+
+    @Test
+    fun `carrying on after a kill puts the same song back at the same second`() = runTest {
+        val first = harness()
+        first.engine.start("pl", first.playlist, PartySettings(DjMode.HORA_LOCA))
+        advanceTimeBy(durationMs + 45_000)
+        runCurrent()
+        val snapshot = first.snapshots.saved!!
+        val songWhenKilled = first.engine.state.value.current!!.id
+        val whatWasComing = first.engine.state.value.next!!.id
+
+        // A new process: new engine, nothing playing, same playlist and the snapshot from disk.
+        val second = harness()
+        val resumed = second.engine.resume(snapshot, second.playlist)
+        runCurrent()
+
+        assertTrue(resumed)
+        assertEquals(songWhenKilled, second.engine.state.value.current!!.id)
+        assertEquals(whatWasComing, second.engine.state.value.next!!.id)
+        // The snapshot is saved every few seconds, so it carries on from the last second saved, not from the kill.
+        assertEquals(listOf("play spotify:track:" + songWhenKilled, "seek " + snapshot.positionMs), second.player.calls)
+        assertEquals(first.engine.state.value.stats, second.engine.state.value.stats)
+        assertEquals(first.engine.state.value.plan, second.engine.state.value.plan)
+    }
+
+    @Test
+    fun `carrying on is refused when the song is no longer in the playlist`() = runTest {
+        val h = harness()
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
+        runCurrent()
+        val snapshot = h.snapshots.saved!!.copy(currentTrackId = "borrada")
+
+        assertFalse(harness().engine.resume(snapshot, h.playlist))
+    }
+
+    @Test
+    fun `ending the party on purpose leaves nothing to carry on`() = runTest {
+        val h = harness()
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
+        runCurrent()
+
+        h.engine.stop()
+        runCurrent()
+
+        assertTrue(h.snapshots.cleared)
+        assertEquals(null, h.snapshots.saved)
     }
 
     @Test

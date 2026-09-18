@@ -2,6 +2,7 @@ package com.rvillarroel.djrodri.domain.dj
 
 import com.rvillarroel.djrodri.domain.lyrics.ChorusAnalysis
 import com.rvillarroel.djrodri.domain.music.CamelotKey
+import com.rvillarroel.djrodri.domain.music.Tempo
 
 /**
  * Everything the DJ knows about one song, all from open sources or from you — never from Spotify's audio.
@@ -42,18 +43,44 @@ object CueEstimator {
     /** After the last chorus, this much left means an outro worth skipping. */
     const val LONG_OUTRO_MS = 25_000L
 
+    /** Electronic music is built in phrases of eight bars; DJs cut exactly there. */
+    const val BEATS_PER_BAR = 4
+    const val BARS_PER_PHRASE = 8
+
+    /**
+     * How much a phrase boundary is trusted with no lyrics to confirm it. High enough for the DJ to use it in
+     * Fiesta mode, because leaving an instrumental track on a phrase boundary is musically safe, and lower than
+     * a chorus detected from real lyrics.
+     */
+    const val GRID_CUT_CONFIDENCE = 0.72
+
+    /** A guessed drop is never confident enough to jump into: for that you tap "¡Drop!". */
+    const val GRID_DROP_CONFIDENCE = 0.5
+
     fun estimate(track: TrackProfile): Cues {
         val chorus = track.chorus
+        val grid = phraseGrid(track)
         val drop = when {
             track.userDropMs != null -> CuePoint(track.userDropMs, 1.0)
             chorus != null -> chorus.occurrences.first().startMs
                 .takeIf { it >= MIN_DROP_MS }
                 ?.let { CuePoint(it, chorus.confidence) }
+            // No lyrics (most electronic tracks): the first drop tends to land a quarter of the way in.
+            grid != null -> grid.boundaryNear(track.durationMs / 4)
+                .takeIf { it >= MIN_DROP_MS }
+                ?.let { CuePoint(it, GRID_DROP_CONFIDENCE) }
             else -> null
         }
 
         val cuts = buildList {
-            if (chorus == null) return@buildList
+            if (chorus == null) {
+                // Without lyrics, cut where the music itself turns: on a phrase boundary, past the middle.
+                grid?.let { g ->
+                    add(CuePoint(g.boundaryNear((track.durationMs * 0.6).toLong()), GRID_CUT_CONFIDENCE))
+                    add(CuePoint(g.boundaryNear((track.durationMs * 0.78).toLong()), GRID_CUT_CONFIDENCE * 0.95))
+                }
+                return@buildList
+            }
             val occurrences = chorus.occurrences
             // With three or more choruses, leaving after the second still gives the crowd the hook twice.
             if (occurrences.size >= 3) add(CuePoint(occurrences[1].endMs, chorus.confidence))
@@ -65,5 +92,21 @@ object CueEstimator {
             .sortedBy { it.positionMs }
 
         return Cues(drop, cuts)
+    }
+
+    /** The phrase grid of a song, counted from its start: only possible when the tempo is known. */
+    private fun phraseGrid(track: TrackProfile): PhraseGrid? {
+        val bpm = track.bpm?.takeIf { it > 0 } ?: return null
+        val phraseMs = (60_000.0 / Tempo.fold(bpm) * BEATS_PER_BAR * BARS_PER_PHRASE).toLong()
+        return PhraseGrid(phraseMs).takeIf { phraseMs in 5_000..40_000 }
+    }
+
+    /**
+     * Phrases counted from the first beat. The song's real first beat is unknown (that would need the audio), so
+     * this is off by the length of its intro; on a phrase boundary that error is the same everywhere and the cut
+     * still lands where the music changes.
+     */
+    private class PhraseGrid(val phraseMs: Long) {
+        fun boundaryNear(positionMs: Long): Long = (Math.round(positionMs.toDouble() / phraseMs)) * phraseMs
     }
 }

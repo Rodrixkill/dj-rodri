@@ -59,6 +59,12 @@ class PlaylistDetailViewModel(app: Application) : AndroidViewModel(app) {
 
     fun analyze(playlistId: String, refresh: Boolean) = container.analysisScheduler.analyze(playlistId, refresh)
 
+    /** Stops the analysis. Songs already analyzed stay analyzed; continuing picks up from there. */
+    fun cancelAnalysis(playlistId: String) {
+        container.analysisScheduler.cancel(playlistId)
+        load(playlistId)
+    }
+
     suspend fun startParty(activity: Activity, playlistId: String): Boolean {
         starting.value = true
         val error = container.startParty(activity, playlistId)
@@ -97,7 +103,12 @@ fun PlaylistDetailScreen(playlistId: String, onBack: () -> Unit, onPartyStarted:
                         Text("Analizando… ${a.done} de ${a.total}", style = MaterialTheme.typography.titleMedium)
                         a.title?.let { Text(it, color = DjColors.TextDim) }
                         LinearProgressIndicator(progress = { if (a.total == 0) 0f else a.done.toFloat() / a.total }, modifier = Modifier.fillMaxWidth())
-                        Text("Puedes salir de la app: sigue en segundo plano.", color = DjColors.TextDim, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Puedes salir de la app: sigue en segundo plano. Lo analizado hasta aquí ya quedó guardado.",
+                            color = DjColors.TextDim,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        OutlinedAction("Cancelar análisis", { vm.cancelAnalysis(playlistId) })
                     }
                     is AnalysisUiState.Failed -> {
                         Text("El análisis falló: ${a.message}", color = DjColors.Warning)

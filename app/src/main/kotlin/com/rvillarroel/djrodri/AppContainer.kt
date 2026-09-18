@@ -14,6 +14,7 @@ import com.rvillarroel.djrodri.data.ai.RulesIntentInterpreter
 import com.rvillarroel.djrodri.data.analysis.PlaylistAnalyzer
 import com.rvillarroel.djrodri.data.http.PoliteHttp
 import com.rvillarroel.djrodri.data.party.PartyEngine
+import com.rvillarroel.djrodri.data.party.PartySnapshot
 import com.rvillarroel.djrodri.data.party.PartyTrack
 import com.rvillarroel.djrodri.data.sources.LrclibClient
 import com.rvillarroel.djrodri.data.sources.MusicBrainzClient
@@ -22,6 +23,7 @@ import com.rvillarroel.djrodri.library.LibraryRepository
 import com.rvillarroel.djrodri.library.db.DjDatabase
 import com.rvillarroel.djrodri.library.db.RoomAnalysisStore
 import com.rvillarroel.djrodri.library.db.RoomPartyRecorder
+import com.rvillarroel.djrodri.library.db.RoomPartySnapshotStore
 import com.rvillarroel.djrodri.party.PartyService
 import com.rvillarroel.djrodri.settings.SettingsRepository
 import com.rvillarroel.djrodri.spotify.AppRemotePlayer
@@ -94,6 +96,7 @@ class AppContainer(private val context: Context) {
         PartyEngine(
             player = AppRemotePlayer(remote, appScope),
             recorder = RoomPartyRecorder(database.party(), database.analysis()),
+            snapshots = RoomPartySnapshotStore(database.partySnapshot()),
             scope = appScope,
             clock = SystemClock::elapsedRealtime,
         )
@@ -122,6 +125,22 @@ class AppContainer(private val context: Context) {
         return null
     }
 
+    /** A party the system killed, still worth offering to carry on. */
+    suspend fun restorableParty(): PartySnapshot? = RoomPartySnapshotStore(database.partySnapshot()).load()
+        ?.takeIf { !party.state.value.active && System.currentTimeMillis() - it.savedAtMs < RESUMABLE_FOR_MS }
+
+    suspend fun resumeParty(activityContext: Context): String? {
+        val snapshot = restorableParty() ?: return "Ya no hay una fiesta que retomar"
+        if (!ensureRemoteConnected(activityContext)) return "No se pudo conectar con la app de Spotify"
+        val tracks = runCatching { partyTracks(snapshot.playlistId) }.getOrElse { return it.message }
+        if (!party.resume(snapshot, tracks)) return "La canción que sonaba ya no está en la playlist"
+        ContextCompat.startForegroundService(context, PartyService.startIntent(context))
+        return null
+    }
+
+    /** Throw away the interrupted party: you did not want to carry it on. */
+    suspend fun forgetParty() = RoomPartySnapshotStore(database.partySnapshot()).clear()
+
     suspend fun switchParty(playlistId: String): String? {
         val tracks = runCatching { partyTracks(playlistId) }.getOrElse { return it.message }
         settings.rememberPlaylist(playlistId)
@@ -131,6 +150,9 @@ class AppContainer(private val context: Context) {
 
     private companion object {
         const val REMOTE_CONNECT_TIMEOUT_MS = 20_000L
+
+        /** After this long the party is over, whatever the phone did. */
+        const val RESUMABLE_FOR_MS = 3 * 60 * 60 * 1000L
     }
 }
 
