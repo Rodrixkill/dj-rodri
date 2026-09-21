@@ -100,6 +100,8 @@ data class PartyState(
     val externalTrackUri: String? = null,
     /** Your drop swap, waiting for the current song's next drop at this position. */
     val swapAtMs: Long? = null,
+    /** Why the next change is what it is: "Moderada · reggaetón → hip hop, estilos cercanos". */
+    val planNote: String? = null,
 )
 
 /**
@@ -375,7 +377,7 @@ class PartyEngine(
                 record(PartyEventKind.DROP_SWAP)
                 execute(s.onCutPointReached())
             }
-            fadeMs > 0 && cut != null && !cut.swap && position >= cut.positionMs - settings.cutLeadMs - QUEUE_LEAD_MS -> {
+            fadeMs > 0 && cut != null && cut.blend && position >= cut.positionMs - settings.cutLeadMs - QUEUE_LEAD_MS -> {
                 val cutMs = cut.positionMs
                 record(if (plan.entry is Entry.AtDrop) PartyEventKind.DROP_ENTRY else PartyEventKind.CUT)
                 // A cut already inside the song's last seconds needs no jump: its own fade is about to start.
@@ -553,6 +555,7 @@ class PartyEngine(
             intent = s.intent,
             externalTrackUri = external,
             swapAtMs = pendingSwapAtMs,
+            planNote = s.note,
         )
     }
 

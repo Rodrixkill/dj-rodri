@@ -1,6 +1,7 @@
 package com.rvillarroel.djrodri.domain.dj
 
 import com.rvillarroel.djrodri.domain.lyrics.ChorusAnalysis
+import com.rvillarroel.djrodri.domain.lyrics.VocalProfile
 import com.rvillarroel.djrodri.domain.music.CamelotKey
 import com.rvillarroel.djrodri.domain.music.Tempo
 
@@ -23,6 +24,8 @@ data class TrackProfile(
     val chorus: ChorusAnalysis? = null,
     /** Where you tapped "¡Drop!" while listening. Beats any estimate. */
     val userDropMs: Long? = null,
+    /** Where it is sung and where it breathes, from the synced lyrics. Null without them. */
+    val vocals: VocalProfile? = null,
 )
 
 data class CuePoint(val positionMs: Long, val confidence: Double)
@@ -94,6 +97,11 @@ object CueEstimator {
             if (occurrences.size >= 3) add(CuePoint(occurrences[1].endMs, chorus.confidence))
             val last = occurrences.last()
             if (track.durationMs - last.endMs >= LONG_OUTRO_MS) add(CuePoint(last.endMs, chorus.confidence * 0.9))
+            // Once the hook has been heard twice, an instrumental stretch is the cleanest way out: no line cut in half.
+            val hookHeardTwice = occurrences.getOrNull(1)?.endMs ?: return@buildList
+            track.vocals?.instrumentals
+                ?.filter { it.startMs >= hookHeardTwice }
+                ?.forEach { add(CuePoint(it.startMs, chorus.confidence * 0.95)) }
         }
             .filter { it.positionMs >= MIN_CUT_MS && it.positionMs <= track.durationMs - MIN_TAIL_MS }
             .distinctBy { it.positionMs }

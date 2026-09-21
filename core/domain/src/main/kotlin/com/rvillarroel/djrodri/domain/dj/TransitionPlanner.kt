@@ -36,8 +36,10 @@ sealed interface Exit {
     /**
      * Leave the song at [positionMs]. With [swap] it is a drop swap: the song builds up to its drop and, right where
      * that drop would hit, the next song's drop hits instead. A dry cut, because the hit is the whole point.
+     * With [blend] Spotify's crossfade carries the change: only for styles made for long blends (house, techno,
+     * disco), and never between two songs full of vocals. Otherwise the cut is dry, on the end of a phrase.
      */
-    data class CutAt(val positionMs: Long, val swap: Boolean = false) : Exit
+    data class CutAt(val positionMs: Long, val swap: Boolean = false, val blend: Boolean = false) : Exit
 }
 
 sealed interface Entry {
@@ -65,6 +67,12 @@ object TransitionPlanner {
     /** A drop entry should lift the room, not bring it down. */
     private const val ENERGY_DROP_TOLERANCE = 0.05
 
+    /** Even the boldest style never cuts more than this share of the night. */
+    private const val MAX_CUT_RATIO = 0.75
+
+    /** A drop swap across styles this far apart (rock into reggaeton) is a crash, not a trick. */
+    private const val MIN_SWAP_AFFINITY = 0.5
+
     /**
      * Decides how [current] ends and how [next] begins, given the DJ's own [past] transitions this session.
      * Manual skips are not in [past]: they are your decisions, not the DJ's, and must not spend its budget.
@@ -79,19 +87,32 @@ object TransitionPlanner {
         // The last song of the night always plays to its end: cutting it would only cut the party short.
         if (next == null) return Transition(Exit.Full, Entry.FromStart)
         chooseSwap(current, next, past, mode, keepFull)?.let { return it }
-        val exit = chooseExit(current, past, mode, keepFull)
+        val exit = chooseExit(current, next, past, mode, keepFull)
         // A drop entry only makes sense after a cut: after a natural ending Spotify is already fading into the start.
-        val entry = if (next != null && exit is Exit.CutAt) chooseEntry(current, next, past, mode) else Entry.FromStart
+        val entry = if (exit is Exit.CutAt) chooseEntry(current, next, past, mode) else Entry.FromStart
         return Transition(exit, entry)
     }
 
-    /** What any early exit needs: not "Completa", not a radio edit, not right after a cut, and budget left. */
+    /** Why this change, in a line: "Moderada · reggaetón → hip hop, estilos cercanos, +3 BPM". */
+    fun explain(current: TrackProfile, next: TrackProfile?): String? = next?.let { Compatibility.match(current, it).explain() }
+
+    /**
+     * What any early exit needs: not "Completa", not a radio edit, not right after a cut, and budget left.
+     * The budget follows the style: rock and tropical songs are songs, and get cut half as often as electronic ones.
+     */
     private fun mayCut(current: TrackProfile, past: List<Transition>, mode: DjMode, keepFull: Boolean): Boolean {
         if (keepFull || current.durationMs < SHORT_SONG_MS) return false
         if (past.lastOrNull()?.exit is Exit.CutAt) return false
         // Counting this song in the ratio means the first songs of the night always play whole: a warm-up.
         val cutsIfWeCut = past.count { it.exit is Exit.CutAt } + 1
-        return cutsIfWeCut.toDouble() / (past.size + 1) <= mode.maxCutRatio
+        val budget = (mode.maxCutRatio * StyleFamily.of(current).cutFactor).coerceAtMost(MAX_CUT_RATIO)
+        return cutsIfWeCut.toDouble() / (past.size + 1) <= budget
+    }
+
+    /** A crossfade only where a DJ would blend: long-blend styles on both sides and not two voices on top of each other. */
+    private fun blends(current: TrackProfile, next: TrackProfile): Boolean {
+        if (!StyleFamily.of(current).longBlend || !StyleFamily.of(next).longBlend) return false
+        return !(current.vocals?.heavy == true && next.vocals?.heavy == true)
     }
 
     /**
@@ -103,6 +124,9 @@ object TransitionPlanner {
      */
     private fun chooseSwap(current: TrackProfile, next: TrackProfile, past: List<Transition>, mode: DjMode, keepFull: Boolean): Transition? {
         if (!mayCut(current, past, mode, keepFull)) return null
+        // A swap belongs to EDM, reggaeton, hip hop, dancehall. Swapping a salsa or a rock song sounds like a glitch.
+        if (!StyleFamily.of(current).swaps || !StyleFamily.of(next).swaps) return null
+        if (Compatibility.match(current, next).genre < MIN_SWAP_AFFINITY) return null
         val electronic = current.isElectronic && next.isElectronic
         val every = if (electronic) (mode.dropSwapEvery + 1) / 2 else mode.dropSwapEvery
         val lastSwap = past.indexOfLast { (it.exit as? Exit.CutAt)?.swap == true }
@@ -121,13 +145,13 @@ object TransitionPlanner {
         return Transition(Exit.CutAt(swapAt.positionMs, swap = true), Entry.AtDrop(drop.positionMs))
     }
 
-    private fun chooseExit(current: TrackProfile, past: List<Transition>, mode: DjMode, keepFull: Boolean): Exit {
+    private fun chooseExit(current: TrackProfile, next: TrackProfile, past: List<Transition>, mode: DjMode, keepFull: Boolean): Exit {
         if (!mayCut(current, past, mode, keepFull)) return Exit.Full
 
         val candidates = CueEstimator.estimate(current).cuts.filter { it.confidence >= mode.minCutConfidence }
         if (candidates.isEmpty()) return Exit.Full
         val chosen = if (mode.prefersEarlyCut) candidates.first() else candidates.last()
-        return Exit.CutAt(chosen.positionMs)
+        return Exit.CutAt(chosen.positionMs, blend = blends(current, next))
     }
 
     private fun chooseEntry(current: TrackProfile, next: TrackProfile, past: List<Transition>, mode: DjMode): Entry {

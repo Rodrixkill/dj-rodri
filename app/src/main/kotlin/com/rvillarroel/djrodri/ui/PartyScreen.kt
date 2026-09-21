@@ -309,6 +309,7 @@ private fun PlanLine(state: com.rvillarroel.djrodri.data.party.PartyState) {
         else -> DjColors.Whole
     }
     Text(PartyService.describe(state), color = color, style = MaterialTheme.typography.titleMedium)
+    state.planNote?.let { Text(it, color = DjColors.TextDim, style = MaterialTheme.typography.bodyMedium) }
 }
 
 @Composable

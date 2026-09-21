@@ -3,6 +3,7 @@ package com.rvillarroel.djrodri.data.analysis
 import com.rvillarroel.djrodri.domain.dj.TrackProfile
 import com.rvillarroel.djrodri.domain.lyrics.ChorusFinder
 import com.rvillarroel.djrodri.domain.lyrics.LrcParser
+import com.rvillarroel.djrodri.domain.lyrics.VocalAnalyzer
 import com.rvillarroel.djrodri.domain.music.CamelotKey
 
 /** A song as it comes from a playlist: identity only, no analysis. [id] is the Spotify track id. */
@@ -38,19 +39,23 @@ data class TrackAnalysis(
     val analyzerVersion: Int,
     val analyzedAtMs: Long,
 ) {
-    fun toProfile(track: SourceTrack, userDropMs: Long?): TrackProfile = TrackProfile(
-        id = track.id,
-        artist = track.artist,
-        durationMs = track.durationMs,
-        bpm = tempo,
-        key = CamelotKey.from(key, mode),
-        energy = energy,
-        danceability = danceability,
-        valence = valence,
-        genres = genres,
-        chorus = syncedLrc?.let { ChorusFinder.find(LrcParser.parse(it), track.durationMs) },
-        userDropMs = userDropMs,
-    )
+    fun toProfile(track: SourceTrack, userDropMs: Long?): TrackProfile {
+        val lines = syncedLrc?.let(LrcParser::parse)
+        return TrackProfile(
+            id = track.id,
+            artist = track.artist,
+            durationMs = track.durationMs,
+            bpm = tempo,
+            key = CamelotKey.from(key, mode),
+            energy = energy,
+            danceability = danceability,
+            valence = valence,
+            genres = genres,
+            chorus = lines?.let { ChorusFinder.find(it, track.durationMs) },
+            userDropMs = userDropMs,
+            vocals = lines?.let { VocalAnalyzer.analyze(it, track.durationMs) },
+        )
+    }
 
     /** An ERROR (network down, source failing) is worth retrying; a clean "not found" is not. */
     val isFinal: Boolean get() = lyricsStatus != LyricsStatus.ERROR

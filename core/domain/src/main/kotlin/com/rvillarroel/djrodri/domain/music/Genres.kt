@@ -36,12 +36,23 @@ object Genres {
     val COUNTRY = "country"
     val CLASSICAL = "classical"
     val BALLAD = "balada"
+    val TRANCE = "trance"
+    val DRUM_AND_BASS = "drum and bass"
+    val DUBSTEP = "dubstep"
+    val DANCEHALL = "dancehall"
+    val AFROBEATS = "afrobeats"
+    val AMAPIANO = "amapiano"
 
     /** A genre implies its families, so "house" also counts as electronic and as dance music. */
     private val families = mapOf(
         HOUSE to setOf(ELECTRONIC, EDM),
         TECHNO to setOf(ELECTRONIC, EDM),
         EDM to setOf(ELECTRONIC),
+        TRANCE to setOf(ELECTRONIC, EDM),
+        DRUM_AND_BASS to setOf(ELECTRONIC),
+        DUBSTEP to setOf(ELECTRONIC, EDM),
+        DANCEHALL to setOf(REGGAE),
+        AMAPIANO to setOf(AFROBEATS),
         TRAP to setOf(HIP_HOP),
         REGGAETON to setOf(LATIN),
         CUMBIA to setOf(LATIN),
@@ -58,9 +69,15 @@ object Genres {
     /** Written forms seen in MusicBrainz tags and in how people ask, mapped to the vocabulary. */
     private val aliases = listOf(
         setOf("house", "deep house", "progressive house", "tech house", "future house", "electro house") to HOUSE,
-        setOf("techno", "minimal techno", "trance", "psytrance", "hardstyle") to TECHNO,
+        setOf("techno", "minimal techno", "melodic techno", "hard techno", "hardstyle") to TECHNO,
+        setOf("trance", "psytrance", "progressive trance", "uplifting trance") to TRANCE,
+        setOf("drum and bass", "drum & bass", "dnb", "jungle", "liquid funk") to DRUM_AND_BASS,
+        setOf("dubstep", "brostep", "riddim") to DUBSTEP,
         setOf("edm", "electro", "dance", "dance pop", "big room", "electronic dance music") to EDM,
-        setOf("electronic", "electronica", "electronico", "electronic music", "ambient", "downtempo", "drum and bass", "dubstep") to ELECTRONIC,
+        setOf("electronic", "electronica", "electronico", "electronic music", "ambient", "downtempo", "breakbeat") to ELECTRONIC,
+        setOf("afrobeats", "afrobeat", "afropop", "afro pop", "afro house") to AFROBEATS,
+        setOf("amapiano") to AMAPIANO,
+        setOf("dancehall", "ragga") to DANCEHALL,
         setOf("pop", "synthpop", "electropop", "k-pop", "latin pop", "pop latino", "teen pop") to POP,
         setOf("rock", "classic rock", "hard rock", "rock en espanol", "rock nacional", "alternative rock", "grunge") to ROCK,
         setOf("metal", "heavy metal", "death metal", "nu metal") to METAL,
@@ -75,7 +92,7 @@ object Genres {
         setOf("salsa", "son cubano", "timba") to SALSA,
         setOf("bachata") to BACHATA,
         setOf("merengue") to MERENGUE,
-        setOf("reggae", "dancehall", "ska") to REGGAE,
+        setOf("reggae", "ska") to REGGAE,
         setOf("disco", "nu-disco", "italo disco") to DISCO,
         setOf("funk", "funk carioca", "g-funk") to FUNK,
         setOf("soul", "motown", "neo soul") to SOUL,

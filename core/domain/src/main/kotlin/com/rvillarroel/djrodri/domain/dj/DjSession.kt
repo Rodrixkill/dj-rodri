@@ -44,6 +44,10 @@ class DjSession(
     var plan: Transition? = null
         private set
 
+    /** Why the next change is what it is, in words: "Moderada · reggaetón → hip hop, estilos cercanos". */
+    var note: String? = null
+        private set
+
     var stats = SessionStats()
         private set
 
@@ -194,6 +198,7 @@ class DjSession(
     private fun replan() {
         val song = current
         plan = song?.let { TransitionPlanner.plan(it, upcoming.firstOrNull(), djTransitions, mode, keepCurrentFull) }
+        note = song?.let { TransitionPlanner.explain(it, upcoming.firstOrNull()) }
     }
 
     private companion object {

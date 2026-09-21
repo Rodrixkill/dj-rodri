@@ -439,12 +439,14 @@ class PartyEngineTest {
             4,
             0.9,
         )
-        val h = Harness(this, 6) { id -> partyTrack(id).let { it.copy(profile = it.profile.copy(chorus = early)) } }
+        // House: a style made for long blends, so the cut is Spotify's fade.
+        val house = setOf("house", "edm", "electronic")
+        val h = Harness(this, 6) { id -> partyTrack(id).let { it.copy(profile = it.profile.copy(chorus = early, genres = house)) } }
         h.player.crossfade = fade
         h.engine.start("pl", h.playlist, PartySettings(DjMode.HORA_LOCA))
         advanceTimeBy(durationMs - fade + 500) // first song: warm-up, fades out whole
         runCurrent()
-        assertEquals(Exit.CutAt(60_000), h.engine.state.value.plan!!.exit)
+        assertEquals(Exit.CutAt(60_000, blend = true), h.engine.state.value.plan!!.exit)
         assertEquals(Entry.AtDrop(20_000), h.engine.state.value.plan!!.entry)
         val callsBefore = h.player.calls.size
 
@@ -456,6 +458,28 @@ class PartyEngineTest {
         assertEquals(listOf("queue $third", "seek $fadeStart", "fade $third", "seek 20000"), h.player.calls.drop(callsBefore))
         assertEquals(PartyEventKind.DROP_ENTRY, h.recorder.events.last().second)
         assertEquals(1, h.engine.state.value.stats.dropEntries)
+    }
+
+    @Test
+    fun `a reggaeton cut stays dry on the phrase even with crossfade on, no fade over the vocals`() = runTest {
+        val early = ChorusAnalysis(
+            listOf(TimeRange(20_000, 35_000), TimeRange(45_000, 60_000), TimeRange(100_000, 120_000), TimeRange(160_000, 180_000)),
+            4,
+            0.9,
+        )
+        val reggaeton = setOf("reggaeton", "latin")
+        val h = Harness(this, 6) { id -> partyTrack(id).let { it.copy(profile = it.profile.copy(chorus = early, genres = reggaeton)) } }
+        h.player.crossfade = fade
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.HORA_LOCA))
+        advanceTimeBy(durationMs - fade + 500)
+        runCurrent()
+        assertEquals(Exit.CutAt(60_000), h.engine.state.value.plan!!.exit)
+        val callsBefore = h.player.calls.size
+
+        advanceTimeBy(65_000)
+        runCurrent()
+
+        assertEquals(listOf("play ${h.currentUri}", "seek 20000"), h.player.calls.drop(callsBefore))
     }
 
     @Test

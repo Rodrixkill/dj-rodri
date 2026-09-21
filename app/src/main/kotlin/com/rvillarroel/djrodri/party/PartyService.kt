@@ -114,8 +114,9 @@ class PartyService : LifecycleService() {
                 is Exit.CutAt -> when {
                     exit.swap -> "💥 Drop swap en ${time(exit.positionMs)}" + (next?.let { " → drop de $it" } ?: "")
                     else -> {
+                        val move = if (exit.blend) "Fundido" else "Corte"
                         val entry = if (plan.entry is Entry.AtDrop) " directo al drop" else ""
-                        "Cambio en ${time(exit.positionMs)}$entry" + (next?.let { " → $it" } ?: "")
+                        "$move en ${time(exit.positionMs)}$entry" + (next?.let { " → $it" } ?: "")
                     }
                 }
             }
