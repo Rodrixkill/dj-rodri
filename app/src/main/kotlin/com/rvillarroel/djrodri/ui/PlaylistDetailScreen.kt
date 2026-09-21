@@ -49,6 +49,10 @@ class PlaylistDetailViewModel(app: Application) : AndroidViewModel(app) {
     fun playlist(playlistId: String) = container.library.playlist(playlistId)
 
     fun load(playlistId: String) = viewModelScope.launch {
+        // The view model outlives the screen: without this, one playlist's error shows up on the next one.
+        message.value = null
+        rows.value = emptyList()
+        coverage.value = null
         runCatching {
             val tracks = container.library.tracks(playlistId)
             val profiles = container.analyzer.profiles(tracks).associateBy { it.id }

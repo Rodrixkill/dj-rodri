@@ -16,6 +16,7 @@ import androidx.work.workDataOf
 import com.rvillarroel.djrodri.R
 import com.rvillarroel.djrodri.container
 import com.rvillarroel.djrodri.data.analysis.AnalysisProgress
+import com.rvillarroel.djrodri.spotify.SpotifyApiException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -48,7 +49,10 @@ class AnalyzePlaylistWorker(context: Context, params: WorkerParameters) : Corout
             }
             Result.success()
         }.getOrElse { error ->
-            if (runAttemptCount < 3) Result.retry() else Result.failure(workDataOf(KEY_ERROR to (error.message ?: "Error desconocido")))
+            // A refusal (403, 404…) will say the same thing on every try; only network trouble and 429 are worth retrying.
+            val permanent = error is SpotifyApiException && error.code in 400..499 && error.code != 429
+            if (!permanent && runAttemptCount < 3) Result.retry()
+            else Result.failure(workDataOf(KEY_ERROR to (error.message ?: "Error desconocido")))
         }
     }
 

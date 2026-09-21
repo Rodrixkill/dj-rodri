@@ -105,6 +105,11 @@ class SpotifyWebApi(
                         log("Spotify pidió esperar $waitSec s (429): ${body.take(120)}")
                         delay(waitSec.coerceAtMost(60) * 1_000)
                     }
+                    // Since February 2026 a dev-mode app only reads the songs of playlists you own or collaborate on.
+                    response.code == 403 && path.startsWith("/playlists/") -> throw SpotifyApiException(
+                        403,
+                        "Spotify no deja leer las canciones de playlists de otros. Cópiala a una playlist tuya y analiza esa.",
+                    )
                     else -> throw SpotifyApiException(response.code, "Spotify respondió ${response.code} en $path")
                 }
             }
