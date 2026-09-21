@@ -19,6 +19,9 @@ import com.rvillarroel.djrodri.data.party.PartyTrack
 import com.rvillarroel.djrodri.data.sources.LrclibClient
 import com.rvillarroel.djrodri.data.sources.MusicBrainzClient
 import com.rvillarroel.djrodri.data.sources.ReccoBeatsClient
+import com.rvillarroel.djrodri.data.analysis.SourceTrack
+import com.rvillarroel.djrodri.domain.dj.DjIntent
+import com.rvillarroel.djrodri.domain.dj.StyleFamily
 import com.rvillarroel.djrodri.library.LibraryRepository
 import com.rvillarroel.djrodri.library.db.DjDatabase
 import com.rvillarroel.djrodri.library.db.RoomAnalysisStore
@@ -32,6 +35,7 @@ import com.rvillarroel.djrodri.spotify.SpotifyAuth
 import com.rvillarroel.djrodri.spotify.SpotifyWebApi
 import com.rvillarroel.djrodri.spotify.TokenStore
 import com.rvillarroel.djrodri.voice.VoiceInput
+import com.rvillarroel.djrodri.ui.TrackActions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -91,6 +95,9 @@ class AppContainer(private val context: Context) {
 
     val voice by lazy { VoiceInput(context) }
 
+    /** Hear, queue, fix a drop: the same actions from every screen that shows a song. */
+    val trackActions by lazy { TrackActions(this) }
+
     val remote = RemoteController()
     val party by lazy {
         PartyEngine(
@@ -125,6 +132,36 @@ class AppContainer(private val context: Context) {
         return null
     }
 
+    /**
+     * "Made for you": your analyzed songs grouped by style, the biggest groups first. Built only from your own
+     * library, since Spotify no longer offers recommendations to apps like this one.
+     */
+    suspend fun styleMixes(): List<StyleMix> {
+        val tracks = library.allTracks()
+        if (tracks.isEmpty()) return emptyList()
+        val byId = tracks.associateBy { it.id }
+        return analyzer.profiles(tracks)
+            .groupBy { StyleFamily.of(it) }
+            .filterKeys { it != StyleFamily.UNKNOWN }
+            .filterValues { it.size >= MIN_MIX_SONGS }
+            .map { (family, songs) -> StyleMix(family, songs.mapNotNull { byId[it.id] }) }
+            .sortedByDescending { it.tracks.size }
+    }
+
+    /** Plays a style mix: the playlist holding most of its songs, with the DJ asked for that style. */
+    suspend fun startMix(activityContext: Context, mix: StyleMix): String? {
+        val playlistId = database.library().playlistHoldingMost(mix.tracks.take(MAX_SQL_IDS).map { it.id })
+            ?: return "No encontré una playlist tuya con estas canciones"
+        startParty(activityContext, playlistId)?.let { return it }
+        party.applyIntent(DjIntent(label = "Mezcla ${mix.family.label}", genres = StyleFamily.genresOf(mix.family)))
+        return null
+    }
+
+    /** Refreshes the name and picture of the greeting; keeps the old ones when offline. */
+    suspend fun refreshProfile() {
+        runCatching { webApi.profile() }.getOrNull()?.let(settings::rememberProfile)
+    }
+
     /** A party the system killed, still worth offering to carry on. */
     suspend fun restorableParty(): PartySnapshot? = RoomPartySnapshotStore(database.partySnapshot()).load()
         ?.takeIf { !party.state.value.active && System.currentTimeMillis() - it.savedAtMs < RESUMABLE_FOR_MS }
@@ -152,6 +189,8 @@ class AppContainer(private val context: Context) {
 
     private companion object {
         const val REMOTE_CONNECT_TIMEOUT_MS = 20_000L
+        const val MIN_MIX_SONGS = 8
+        const val MAX_SQL_IDS = 900
 
         /** After this long the party is over, whatever the phone did. */
         const val RESUMABLE_FOR_MS = 3 * 60 * 60 * 1000L
@@ -169,3 +208,8 @@ class DjRodriApplication : Application() {
 }
 
 val Context.container: AppContainer get() = (applicationContext as DjRodriApplication).container
+
+/** "Made for you": your songs of one style, playable as a party that leans on that style. */
+data class StyleMix(val family: StyleFamily, val tracks: List<SourceTrack>) {
+    val covers: List<String> get() = tracks.mapNotNull { it.imageUrl }.distinct().take(4)
+}

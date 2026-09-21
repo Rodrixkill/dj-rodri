@@ -9,6 +9,7 @@ import com.rvillarroel.djrodri.library.db.toSource
 import com.rvillarroel.djrodri.spotify.LIKED_SONGS_ID
 import com.rvillarroel.djrodri.spotify.SpotifyWebApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
 /**
  * Your playlists, read from Spotify only when you ask (pull to refresh, or opening one never loaded).
@@ -32,13 +33,30 @@ class LibraryRepository(private val api: SpotifyWebApi, private val dao: Library
     /** Local songs of a playlist, fetched from Spotify the first time or when [refresh] is asked. */
     suspend fun tracks(playlistId: String, refresh: Boolean = false): List<SourceTrack> {
         val synced = dao.playlist(playlistId)?.tracksSyncedAtMs != null
-        if (refresh || !synced) {
-            val fresh = api.tracks(playlistId)
-            dao.replaceTracks(playlistId, fresh.map { it.toEntity() }, clock())
-            return fresh
-        }
-        return dao.tracksOf(playlistId).map { it.toSource() }
+        if (refresh || !synced) return fetch(playlistId)
+        val cached = dao.tracksOf(playlistId).map { it.toSource() }
+        // Read before covers were kept (database v4): read once more to get them, or show what there is offline.
+        if (cached.isNotEmpty() && cached.none { it.imageUrl != null }) return runCatching { fetch(playlistId) }.getOrDefault(cached)
+        return cached
+    }
+
+    private suspend fun fetch(playlistId: String): List<SourceTrack> {
+        val fresh = api.tracks(playlistId)
+        dao.replaceTracks(playlistId, fresh.map { it.toEntity() }, clock())
+        return fresh
     }
 
     suspend fun trackByUri(uri: String): SourceTrack? = dao.trackByUri(uri)?.toSource()
+
+    suspend fun allTracks(): List<SourceTrack> = dao.allTracks().map { it.toSource() }
+
+    suspend fun search(text: String): List<SourceTrack> {
+        val query = text.trim().replace("%", "").replace("_", "")
+        if (query.isEmpty()) return emptyList()
+        return dao.search("%$query%").map { it.toSource() }
+    }
+
+    val recentlyPlayed: Flow<List<SourceTrack>> = dao.recentlyPlayed().map { list -> list.map { it.toSource() } }
+
+    suspend fun coversOf(playlistId: String): List<String> = dao.coversOf(playlistId)
 }

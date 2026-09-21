@@ -16,13 +16,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,7 +44,10 @@ import com.rvillarroel.djrodri.data.party.PartySettings
 import com.rvillarroel.djrodri.domain.dj.DjMode
 import com.rvillarroel.djrodri.party.description
 import com.rvillarroel.djrodri.party.label
-import com.rvillarroel.djrodri.ui.theme.DjColors
+import com.rvillarroel.djrodri.ui.theme.Dj
+import com.rvillarroel.djrodri.ui.theme.DjType
+import com.rvillarroel.djrodri.ui.theme.Space
+import com.rvillarroel.djrodri.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.text.DateFormat
@@ -88,6 +91,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    val theme = container.settings.theme
+
+    fun setTheme(mode: ThemeMode) = container.settings.setTheme(mode)
+
     fun update(settings: PartySettings) {
         container.settings.updateParty(settings)
         if (container.party.state.value.active) container.party.updateSettings(settings)
@@ -103,85 +110,124 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 @Composable
 fun SettingsScreen(onBack: () -> Unit, onLab: () -> Unit, vm: SettingsViewModel = viewModel()) {
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val theme by vm.theme.collectAsStateWithLifecycle()
     val sessions by vm.sessions.collectAsStateWithLifecycle(emptyList())
     val dropMarks by vm.dropMarks.collectAsStateWithLifecycle(0)
     val context = LocalContext.current
 
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Space.gutter),
+        verticalArrangement = Arrangement.spacedBy(Space.md),
     ) {
         ScreenHeader("Ajustes", onBack = onBack)
 
-        Panel {
-            Text("Modo por defecto", style = MaterialTheme.typography.titleMedium)
+        SettingsGroup("Apariencia") {
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
+                ThemeMode.entries.forEach { mode -> DjChip(mode.label, theme == mode, { vm.setTheme(mode) }) }
+            }
+            Hint("Sistema sigue el modo oscuro o claro del celular.")
+        }
+
+        SettingsGroup("Cómo mezcla el DJ") {
             DjMode.entries.forEach { mode ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    FilterChip(selected = settings.mode == mode, onClick = { vm.update(settings.copy(mode = mode)) }, label = { Text(mode.label()) })
-                    Text(mode.description(), color = DjColors.TextDim, modifier = Modifier.padding(start = 10.dp))
+                    DjChip(mode.label(), settings.mode == mode, { vm.update(settings.copy(mode = mode)) })
+                    Text(mode.description(), style = DjType.meta, color = Dj.colors.textSecondary, modifier = Modifier.padding(start = Space.sm))
                 }
             }
         }
 
-        Panel {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Fundido de Spotify en los cambios", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "Cada cambio usa el crossfade de Spotify, también los cortes y las entradas en el drop. " +
-                            "Necesita el crossfade activado en Spotify (Ajustes → Reproducción). Apagado: cortes limpios.",
-                        color = DjColors.TextDim,
-                    )
-                }
-                Switch(checked = settings.useSpotifyFade, onCheckedChange = { vm.update(settings.copy(useSpotifyFade = it)) })
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Pausa corta antes del drop", style = MaterialTheme.typography.titleMedium)
-                    Text("Evita que se escuche el inicio de la canción antes del salto. Actívala si la entrada directa se nota.", color = DjColors.TextDim)
-                }
-                Switch(checked = settings.dropWithPause, onCheckedChange = { vm.update(settings.copy(dropWithPause = it)) })
-            }
-            Text("Adelanto del corte: ${settings.cutLeadMs} ms", style = MaterialTheme.typography.titleMedium)
-            Text("Compensa lo que tarda Spotify en cambiar de canción. Usa la latencia que midió la prueba de la fase 0.", color = DjColors.TextDim)
+        SettingsGroup("Transiciones") {
+            SwitchRow(
+                "Fundido de Spotify",
+                "Las canciones que terminan solas y los cambios de house, techno o disco usan el crossfade de Spotify. " +
+                    "Necesita el crossfade activado en Spotify (Ajustes → Reproducción).",
+                settings.useSpotifyFade,
+            ) { vm.update(settings.copy(useSpotifyFade = it)) }
+            SwitchRow(
+                "Pausa corta antes del drop",
+                "Evita que se oiga el inicio de la canción antes del salto. Actívala si la entrada directa se nota.",
+                settings.dropWithPause,
+            ) { vm.update(settings.copy(dropWithPause = it)) }
+            Text("Adelanto del corte · ${settings.cutLeadMs} ms", style = DjType.cardTitle, color = Dj.colors.textPrimary)
+            Hint("Compensa lo que tarda Spotify en cambiar de canción (medido en el celular: 80–110 ms).")
             Slider(
                 value = settings.cutLeadMs.toFloat(),
                 onValueChange = { vm.update(settings.copy(cutLeadMs = (it / 25).toLong() * 25)) },
                 valueRange = 0f..800f,
+                colors = SliderDefaults.colors(
+                    thumbColor = Dj.colors.accent,
+                    activeTrackColor = Dj.colors.accent,
+                    inactiveTrackColor = Dj.colors.progressInactive,
+                ),
             )
         }
 
         AiPanel(vm)
 
-        Panel {
-            Text("Que HyperOS no mate la fiesta", style = MaterialTheme.typography.titleMedium)
-            Text("Xiaomi cierra apps en segundo plano. Haz estos tres pasos una vez (y revísalos después de actualizar HyperOS).", color = DjColors.TextDim)
-            TextButton(onClick = { openAutostart(context) }) { Text("1. Activar inicio automático") }
-            TextButton(onClick = { openBatterySettings(context) }) {
-                Text(if (isIgnoringBattery(context)) "2. Batería sin restricciones ✓" else "2. Quitar restricción de batería")
-            }
-            Text("3. En Recientes, mantén presionada DJ Rodri y toca el candado.", color = DjColors.TextDim)
+        SettingsGroup("Que HyperOS no corte la fiesta") {
+            Hint("Xiaomi cierra apps en segundo plano. Haz estos pasos una vez y revísalos después de actualizar HyperOS.")
+            TertiaryButton("1 · Activar inicio automático", { openAutostart(context) }, color = Dj.colors.accentBright)
+            TertiaryButton(
+                if (isIgnoringBattery(context)) "2 · Batería sin restricciones ✓" else "2 · Quitar restricción de batería",
+                { openBatterySettings(context) },
+                color = Dj.colors.accentBright,
+            )
+            Hint("3 · En Recientes, mantén presionada DJ Rodri y toca el candado.")
         }
 
-        Panel {
-            Text("Tus datos", style = MaterialTheme.typography.titleMedium)
-            Text("$dropMarks drops marcados a mano", color = DjColors.TextDim)
+        SettingsGroup("Tus fiestas") {
+            Hint("$dropMarks drops marcados a mano")
             sessions.take(8).forEach { s ->
                 val songs = s.fullPlays + s.cuts + s.manualSkips
                 val skipRate = if (songs == 0) 0 else s.manualSkips * 100 / songs
                 Text(
                     "${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(s.startedAtMs))} · $songs canciones · " +
-                        "${s.cuts} cortes · ${s.dropEntries} drops · saltos $skipRate%",
-                    color = if (skipRate > 30) DjColors.Warning else DjColors.Text,
+                        "${s.cuts} cambios · ${s.dropEntries} al drop · saltos $skipRate %",
+                    style = DjType.meta,
+                    color = if (skipRate > 30) Dj.colors.danger else Dj.colors.textPrimary,
                 )
             }
-            if (sessions.isEmpty()) Text("Todavía no hay fiestas registradas.", color = DjColors.TextDim)
+            if (sessions.isEmpty()) Hint("Todavía no hay fiestas registradas.")
         }
 
-        Panel {
-            TextButton(onClick = onLab) { Text("Laboratorio: pruebas de la fase 0") }
-            TextButton(onClick = vm::logout) { Text("Cerrar sesión de Spotify", color = DjColors.Warning) }
+        SettingsGroup("Cuenta y pruebas") {
+            TertiaryButton("Laboratorio: pruebas de sincronía con Spotify", onLab)
+            TertiaryButton("Cerrar sesión de Spotify", vm::logout, color = Dj.colors.danger)
         }
+        Spacer(Modifier.height(Space.xxl))
+    }
+}
+
+@Composable
+private fun SettingsGroup(title: String, content: @Composable () -> Unit) {
+    Column {
+        Text(title.uppercase(), style = DjType.technicalSmall, color = Dj.colors.textTertiary, modifier = Modifier.padding(start = Space.xxs, bottom = Space.xs))
+        Panel { content() }
+    }
+}
+
+@Composable
+private fun Hint(text: String) = Text(text, style = DjType.meta, color = Dj.colors.textSecondary)
+
+@Composable
+private fun SwitchRow(title: String, hint: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = Space.sm)) {
+            Text(title, style = DjType.cardTitle, color = Dj.colors.textPrimary)
+            Hint(hint)
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = Dj.colors.accent,
+                checkedThumbColor = Dj.colors.onAccent,
+                uncheckedTrackColor = Dj.colors.surfaceTertiary,
+                uncheckedThumbColor = Dj.colors.textSecondary,
+                uncheckedBorderColor = Dj.colors.surfaceTertiary,
+            ),
+        )
     }
 }
 
@@ -198,42 +244,27 @@ private fun AiPanel(vm: SettingsViewModel) {
 
     LaunchedEffect(Unit) { vm.refreshModel() }
 
-    Panel {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("IA local", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Entiende pedidos escritos como \"algo para perrear pero sin Bad Bunny\". Corre en tu celular y " +
-                        "solo recibe tu frase: nunca ve tus canciones. Si la apagas, el DJ usa palabras clave.",
-                    color = DjColors.TextDim,
-                )
-            }
-            Switch(checked = useAi, onCheckedChange = vm::setUseLocalAi)
-        }
-
-        when (val s = status) {
-            is LlmStatus.Ready -> Text("Modelo ${s.modelName} listo en ${s.backend} (cargó en ${s.loadMs} ms)", color = DjColors.Whole)
-            LlmStatus.Loading -> Text("Cargando el modelo…", color = DjColors.NeonSoft)
-            is LlmStatus.Failed -> Text(s.reason, color = DjColors.Warning)
-            LlmStatus.NotInstalled -> {
-                Text("No hay modelo instalado: por ahora responden las reglas.", color = DjColors.Warning)
-                Text(
-                    "Descarga un modelo .litertlm (por ejemplo Gemma 4 E2B de litert-community en Hugging Face) y cópialo con:",
-                    color = DjColors.TextDim,
-                )
-                Text("adb push modelo.litertlm ${vm.modelsDir}/", color = DjColors.NeonSoft)
-            }
-        }
-
-        OutlinedTextField(
-            value = request,
-            onValueChange = { request = it },
-            label = { Text("Probar un pedido") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+    SettingsGroup("Pedidos al DJ") {
+        SwitchRow(
+            "IA local",
+            "Entiende pedidos como «algo para perrear pero sin Bad Bunny». Corre en tu celular y solo recibe tu frase: " +
+                "nunca ve tus canciones. Apagada, el DJ usa palabras clave.",
+            useAi,
+            vm::setUseLocalAi,
         )
-        TextButton(onClick = { vm.testAi(request) }) { Text("Probar") }
-        testResult?.let { Text(it, color = DjColors.Text) }
+        when (val s = status) {
+            is LlmStatus.Ready -> Text("Modelo ${s.modelName} listo en ${s.backend} (cargó en ${s.loadMs} ms)", style = DjType.meta, color = Dj.colors.success)
+            LlmStatus.Loading -> Hint("Cargando el modelo…")
+            is LlmStatus.Failed -> Text(s.reason, style = DjType.meta, color = Dj.colors.danger)
+            LlmStatus.NotInstalled -> {
+                Hint("No hay modelo instalado: por ahora responden las palabras clave. Copia un modelo .litertlm (por ejemplo Gemma de litert-community en Hugging Face) con:")
+                Text("adb push modelo.litertlm ${vm.modelsDir}/", style = DjType.technicalSmall, color = Dj.colors.textPrimary)
+            }
+        }
+        SearchField(request, { request = it }, placeholder = "Escribe un pedido de prueba", trailing = {
+            TertiaryButton("Probar", { vm.testAi(request) }, color = Dj.colors.accentBright)
+        })
+        testResult?.let { Text(it, style = DjType.meta, color = Dj.colors.textPrimary) }
     }
 }
 

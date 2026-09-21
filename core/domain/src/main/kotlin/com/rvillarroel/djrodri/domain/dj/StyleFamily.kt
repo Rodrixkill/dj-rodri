@@ -55,6 +55,21 @@ enum class StyleFamily(val label: String, val swaps: Boolean, val longBlend: Boo
             return AFFINITY[setOf(a, b)] ?: DISTANT
         }
 
+        /** The genres a family stands for, to ask the DJ for "a house mix" in the numbers it understands. */
+        fun genresOf(family: StyleFamily): Set<String> = when (family) {
+            ELECTRONIC -> FOUR_ON_THE_FLOOR + Genres.ELECTRONIC
+            BASS -> BASS_GENRES
+            REGGAETON -> setOf(Genres.REGGAETON)
+            HIP_HOP -> setOf(Genres.HIP_HOP, Genres.TRAP)
+            AFRO_CARIBBEAN -> AFRO_GENRES
+            POP -> setOf(Genres.POP)
+            GROOVE -> GROOVE_GENRES
+            TROPICAL -> TROPICAL_GENRES
+            ROCK -> ROCK_GENRES
+            MELLOW -> MELLOW_GENRES
+            UNKNOWN -> emptySet()
+        }
+
         private const val NEUTRAL = 0.5
         private const val DISTANT = 0.35
 

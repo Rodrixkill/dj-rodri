@@ -15,6 +15,8 @@ data class SourceTrack(
     val album: String,
     val durationMs: Long,
     val isrc: String?,
+    /** Album cover URL from Spotify, for showing only. */
+    val imageUrl: String? = null,
 )
 
 enum class LyricsStatus { SYNCED, PLAIN_ONLY, INSTRUMENTAL, NOT_FOUND, ERROR }

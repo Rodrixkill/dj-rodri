@@ -9,6 +9,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
+data class Profile(val name: String?, val imageUrl: String?)
+
 data class PlaylistSummary(val id: String, val name: String, val ownerId: String, val total: Int?, val imageUrl: String? = null)
 
 /** "Tus me gusta" is not a real playlist id; the library endpoint stands in for it. */
@@ -26,6 +28,15 @@ class SpotifyWebApi(
     private val log: (String) -> Unit = { android.util.Log.d("DJRodri", it) },
 ) {
     suspend fun displayName(): String? = get("/me").optString("display_name")
+
+    /** Your name and profile picture, for the greeting. */
+    suspend fun profile(): Profile {
+        val me = get("/me")
+        return Profile(
+            name = me.optString("display_name").takeIf { it.isNotBlank() },
+            imageUrl = me.optJSONArray("images")?.optJSONObject(0)?.optString("url")?.takeIf { it.isNotBlank() },
+        )
+    }
 
     suspend fun myPlaylists(): List<PlaylistSummary> {
         val result = mutableListOf<PlaylistSummary>()
@@ -71,6 +82,8 @@ class SpotifyWebApi(
                     album = track.optJSONObject("album")?.optString("name").orEmpty(),
                     durationMs = track.optLong("duration_ms"),
                     isrc = track.optJSONObject("external_ids")?.optString("isrc")?.takeIf { it.isNotBlank() },
+                    // Covers come largest first (640, 300, 64 px): the large one stays sharp on the Now Playing screen.
+                    imageUrl = track.optJSONObject("album")?.optJSONArray("images")?.optJSONObject(0)?.optString("url")?.takeIf { it.isNotBlank() },
                 )
             }
             path = nextPath(json)

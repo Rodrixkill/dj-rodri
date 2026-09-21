@@ -28,6 +28,8 @@ data class TrackEntity(
     val album: String,
     val durationMs: Long,
     val isrc: String?,
+    /** The album cover Spotify serves, shown as it comes (never cropped or altered). */
+    val imageUrl: String? = null,
 )
 
 /** Ids, not copies: a playlist points at tracks, so a song analyzed once is analyzed for every playlist. */

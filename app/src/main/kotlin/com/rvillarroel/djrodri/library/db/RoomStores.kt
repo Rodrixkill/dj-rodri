@@ -40,9 +40,9 @@ class RoomPartyRecorder(private val party: PartyDao, private val analysis: Analy
         analysis.upsertDropMark(DropMarkEntity(trackId, positionMs, atMs))
 }
 
-fun TrackEntity.toSource() = SourceTrack(id, uri, name, artist, album, durationMs, isrc)
+fun TrackEntity.toSource() = SourceTrack(id, uri, name, artist, album, durationMs, isrc, imageUrl)
 
-fun SourceTrack.toEntity() = TrackEntity(id, uri, name, artist, album, durationMs, isrc)
+fun SourceTrack.toEntity() = TrackEntity(id, uri, name, artist, album, durationMs, isrc, imageUrl)
 
 private fun AnalysisEntity.toDomain() = TrackAnalysis(
     trackId = trackId,

@@ -79,6 +79,8 @@ dependencies {
     implementation(libs.glance.material3)
     // Local LLM: it only turns your sentence into numbers, and never sees a song.
     implementation(libs.litertlm)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
 
     testImplementation(libs.junit4)
     testImplementation(libs.robolectric)

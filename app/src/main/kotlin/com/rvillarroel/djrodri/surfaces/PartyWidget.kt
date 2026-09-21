@@ -40,9 +40,9 @@ class PartyWidget : GlanceAppWidget() {
         val state = context.container.party.state.value
         provideContent {
             val white = ColorProvider(Color.White)
-            val dim = ColorProvider(Color(0xFFB9A8FF))
+            val dim = ColorProvider(Color(0xFFA7A9AD))
             Column(
-                modifier = GlanceModifier.fillMaxSize().background(Color(0xFF1A1033)).padding(12.dp)
+                modifier = GlanceModifier.fillMaxSize().background(Color(0xFF121416)).padding(12.dp)
                     .clickable(actionStartActivity<MainActivity>()),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

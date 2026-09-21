@@ -69,6 +69,37 @@ interface LibraryDao {
 
     @Query("SELECT * FROM track WHERE uri = :uri LIMIT 1")
     suspend fun trackByUri(uri: String): TrackEntity?
+
+    /** Every song of every playlist read so far: the library that Search and the genre mixes work on. */
+    @Query("SELECT * FROM track ORDER BY name")
+    suspend fun allTracks(): List<TrackEntity>
+
+    /** By title, artist or album, as you type. [pattern] comes with its % wildcards. */
+    @Query("SELECT * FROM track WHERE name LIKE :pattern OR artist LIKE :pattern OR album LIKE :pattern ORDER BY name LIMIT :limit")
+    suspend fun search(pattern: String, limit: Int = 60): List<TrackEntity>
+
+    /** Songs heard at your parties, most recent first, each once. */
+    @Query(
+        """
+        SELECT t.* FROM track t
+        JOIN (SELECT trackId, MAX(atMs) AS lastAt FROM play_event GROUP BY trackId) e ON e.trackId = t.id
+        ORDER BY e.lastAt DESC LIMIT :limit
+        """,
+    )
+    fun recentlyPlayed(limit: Int = 20): Flow<List<TrackEntity>>
+
+    /** The playlist holding most of [trackIds]: where a genre mix is played from. */
+    @Query(
+        """
+        SELECT playlistId FROM playlist_track WHERE trackId IN (:trackIds)
+        GROUP BY playlistId ORDER BY COUNT(*) DESC LIMIT 1
+        """,
+    )
+    suspend fun playlistHoldingMost(trackIds: List<String>): String?
+
+    /** The first covers of a playlist, for a mosaic when the playlist has no picture of its own. */
+    @Query("SELECT t.imageUrl FROM playlist_track pt JOIN track t ON t.id = pt.trackId WHERE pt.playlistId = :playlistId AND t.imageUrl IS NOT NULL ORDER BY pt.position LIMIT 4")
+    suspend fun coversOf(playlistId: String): List<String>
 }
 
 @Dao

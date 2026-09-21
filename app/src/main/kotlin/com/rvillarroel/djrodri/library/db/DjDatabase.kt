@@ -13,7 +13,7 @@ import androidx.sqlite.execSQL
         PlaylistEntity::class, TrackEntity::class, PlaylistTrackEntity::class, AnalysisEntity::class,
         DropMarkEntity::class, PartySessionEntity::class, PlayEventEntity::class, PartySnapshotEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class DjDatabase : RoomDatabase() {
@@ -54,9 +54,16 @@ abstract class DjDatabase : RoomDatabase() {
             }
         }
 
+        /** Version 4 shows album covers: the column starts empty and fills the next time a playlist is read. */
+        internal val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE track ADD COLUMN imageUrl TEXT")
+            }
+        }
+
         fun create(context: Context): DjDatabase =
             Room.databaseBuilder(context, DjDatabase::class.java, "djrodri.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

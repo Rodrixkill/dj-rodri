@@ -3,6 +3,8 @@ package com.rvillarroel.djrodri.settings
 import android.content.Context
 import com.rvillarroel.djrodri.data.party.PartySettings
 import com.rvillarroel.djrodri.domain.dj.DjMode
+import com.rvillarroel.djrodri.spotify.Profile
+import com.rvillarroel.djrodri.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -26,6 +28,38 @@ class SettingsRepository(context: Context) {
     }
 
     val lastPlaylistId: String? get() = prefs.getString(KEY_LAST_PLAYLIST, null)
+
+    /** Follows the phone by default; Ajustes can pin it dark or light. */
+    private val _theme = MutableStateFlow(runCatching { ThemeMode.valueOf(prefs.getString(KEY_THEME, null)!!) }.getOrDefault(ThemeMode.SYSTEM))
+    val theme: StateFlow<ThemeMode> = _theme
+
+    fun setTheme(mode: ThemeMode) {
+        prefs.edit().putString(KEY_THEME, mode.name).apply()
+        _theme.value = mode
+    }
+
+    /** Your Spotify name and picture, kept so the greeting shows instantly, even offline. */
+    private val _profile = MutableStateFlow(Profile(prefs.getString(KEY_NAME, null), prefs.getString(KEY_AVATAR, null)))
+    val profile: StateFlow<Profile> = _profile
+
+    fun rememberProfile(profile: Profile) {
+        prefs.edit().putString(KEY_NAME, profile.name).putString(KEY_AVATAR, profile.imageUrl).apply()
+        _profile.value = profile
+    }
+
+    /** What you searched for, newest first. */
+    val recentSearches: List<String>
+        get() = prefs.getString(KEY_SEARCHES, null)?.split("\n")?.filter { it.isNotBlank() }.orEmpty()
+
+    fun rememberSearch(text: String) {
+        val clean = text.trim().takeIf { it.length >= 2 } ?: return
+        val list = (listOf(clean) + recentSearches.filterNot { it.equals(clean, ignoreCase = true) }).take(MAX_SEARCHES)
+        prefs.edit().putString(KEY_SEARCHES, list.joinToString("\n")).apply()
+    }
+
+    fun forgetSearch(text: String) {
+        prefs.edit().putString(KEY_SEARCHES, recentSearches.filterNot { it == text }.joinToString("\n")).apply()
+    }
 
     fun updateParty(settings: PartySettings) {
         prefs.edit()
@@ -59,5 +93,10 @@ class SettingsRepository(context: Context) {
         const val KEY_GUIDE = "hyperos_guide_done"
         const val KEY_LOCAL_AI = "use_local_ai"
         const val KEY_LAST_PLAYLIST = "last_playlist"
+        const val KEY_THEME = "theme"
+        const val KEY_NAME = "profile_name"
+        const val KEY_AVATAR = "profile_avatar"
+        const val KEY_SEARCHES = "recent_searches"
+        const val MAX_SEARCHES = 8
     }
 }

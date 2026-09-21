@@ -78,6 +78,22 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun `covers arrive as an empty column, and every song, mark and analysis stays`() {
+        helper.createDatabase(version = 3).use { db ->
+            db.execSQL("INSERT INTO track (id, uri, name, artist, album, durationMs, isrc) VALUES ('t1', 'spotify:track:t1', 'Tema', 'Artista', 'Album', 200000, NULL)")
+            db.execSQL("INSERT INTO drop_mark (trackId, positionMs, markedAtMs) VALUES ('t1', 52300, 10)")
+        }
+
+        helper.runMigrationsAndValidate(version = 4, migrations = listOf(DjDatabase.MIGRATION_3_4)).use { db ->
+            db.readRow("SELECT name, imageUrl FROM track") {
+                assertEquals("Tema", it.getText(0))
+                assertTrue(it.isNull(1))
+            }
+            db.readRow("SELECT positionMs FROM drop_mark") { assertEquals(52_300L, it.getLong(0)) }
+        }
+    }
+
     private fun SQLiteConnection.readRow(sql: String, assertions: (androidx.sqlite.SQLiteStatement) -> Unit) {
         prepare(sql).use { statement ->
             assertTrue("sin filas: $sql", statement.step())

@@ -102,6 +102,10 @@ data class PartyState(
     val swapAtMs: Long? = null,
     /** Why the next change is what it is: "Moderada · reggaetón → hip hop, estilos cercanos". */
     val planNote: String? = null,
+    /** What the analysis knows of the song playing: tempo, key, energy for the Now Playing screen. */
+    val currentProfile: TrackProfile? = null,
+    /** The next few songs, in the order the DJ will play them. */
+    val upcoming: List<SourceTrack> = emptyList(),
 )
 
 /**
@@ -286,6 +290,14 @@ class PartyEngine(
         val song = s.current ?: return null
         return playing.takeIf { it.trackUri == uriOf(song.id) }?.positionAt(clock())
     }
+
+    /** "Que suene después": a song of the party jumps to the front of what is coming. False if it is not in the set. */
+    fun playNext(trackId: String) = act { s ->
+        if (s.promote(trackId)) publish()
+    }
+
+    /** Whether a song is still to come in this party, so "play next" can be offered. */
+    fun isUpcoming(trackId: String): Boolean = session?.queue?.any { it.id == trackId } == true
 
     fun moreEnergy() = act { s -> s.moreEnergy(); publish() }
     fun lessEnergy() = act { s -> s.lessEnergy(); publish() }
@@ -606,6 +618,8 @@ class PartyEngine(
             externalTrackUri = external,
             swapAtMs = pendingSwapAtMs,
             planNote = s.note,
+            currentProfile = song,
+            upcoming = s.queue.take(UP_NEXT).mapNotNull { tracks[it.id]?.source },
         )
     }
 
@@ -616,6 +630,7 @@ class PartyEngine(
         const val SWITCH_TIMEOUT_MS = 3_000L
         const val STOPPED_AT_END_MS = 1_500L
         const val SNAPSHOT_EVERY_MS = 10_000L
+        const val UP_NEXT = 8
         /** How early the next song is queued: on the phone Spotify once needed more than 0.8 s to take it. */
         const val QUEUE_LEAD_MS = 4_000L
 
