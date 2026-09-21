@@ -77,15 +77,16 @@ class DjSessionTest {
     // ---- Controls -----------------------------------------------------------------------------------------------
 
     @Test
-    fun `skipping counts against the DJ but does not spend its cut budget`() {
+    fun `skipping counts against the DJ, does not spend its cut budget, and ends the warm-up`() {
         val session = party()
         session.start()
 
         repeat(3) { session.skip() }
 
         assertEquals(3, session.stats.manualSkips)
-        // Still warming up: skips are not transitions, so the DJ has made no decisions yet.
-        assertEquals(Exit.Full, session.plan!!.exit)
+        assertEquals(0, session.stats.cuts)
+        // Three songs heard: the night is warm, so the DJ may mix the fourth instead of playing it whole by rule.
+        assertTrue(session.plan!!.exit is Exit.CutAt)
     }
 
     @Test

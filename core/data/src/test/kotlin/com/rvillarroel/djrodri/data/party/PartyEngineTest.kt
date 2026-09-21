@@ -236,20 +236,51 @@ class PartyEngineTest {
     }
 
     @Test
-    fun `with no drop ahead in the song, your drop swap happens now`() = runTest {
+    fun `with no drop left in the song, your drop swap waits for the next song instead of jumping now`() = runTest {
         val h = harness()
         h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
         advanceTimeBy(190_000) // past the last chorus
         runCurrent()
+        val first = h.currentUri
+        val callsBefore = h.player.calls.size
 
         h.engine.dropSwap()
         runCurrent()
 
+        // Found on the phone: swapping on the spot sounded like a glitch. Now nothing happens yet, and it says so.
+        assertEquals(callsBefore, h.player.calls.size)
+        assertTrue(h.engine.state.value.swapNextSong)
+        assertNotNull(h.engine.state.value.notice)
+        assertEquals(first, h.currentUri)
+
+        advanceTimeBy(durationMs - 190_000) // the song ends; the next one starts from the top
+        runCurrent()
+        assertEquals(40_000L, h.engine.state.value.swapAtMs) // armed on the new song's first drop
+        assertEquals(false, h.engine.state.value.swapNextSong)
+
+        advanceTimeBy(40_000)
+        runCurrent()
         assertEquals(listOf("play ${h.currentUri}", "seek 40000"), h.player.calls.takeLast(2))
+        assertEquals(PartyEventKind.DROP_SWAP, h.recorder.events.last().second)
     }
 
     @Test
-    fun `fade now hands the change to Spotify's crossfade from wherever the song is`() = runTest {
+    fun `tapping drop swap again cancels it`() = runTest {
+        val h = harness()
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
+        advanceTimeBy(10_000)
+        runCurrent()
+
+        h.engine.dropSwap()
+        runCurrent()
+        h.engine.dropSwap()
+        runCurrent()
+
+        assertEquals(null, h.engine.state.value.swapAtMs)
+    }
+
+    @Test
+    fun `fade waits for the end of the chorus, never cuts a line in half`() = runTest {
         val h = harness()
         h.player.crossfade = fade
         h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
@@ -258,12 +289,39 @@ class PartyEngineTest {
         val callsBefore = h.player.calls.size
 
         h.engine.fadeNow()
-        advanceTimeBy(7_000) // 4 s for the queue to settle, then 2 s before the fade window
+        runCurrent()
+        // Found on the phone: fading on the spot felt like skipping. The first chorus ends at 1:00, so the fade waits.
+        assertEquals(60_000L, h.engine.state.value.fadeAtMs)
+        advanceTimeBy(20_000)
+        runCurrent()
+        assertEquals(callsBefore, h.player.calls.size)
+
+        advanceTimeBy(10_000 + 3_000) // past 1:00: queued at 0:56, sent to the fade start at 1:00, Spotify fades
         runCurrent()
 
         val second = h.currentUri
         assertEquals(listOf("queue $second", "seek ${durationMs - fade - 2_000}", "fade $second"), h.player.calls.drop(callsBefore))
         assertEquals(PartyEventKind.FADE_NOW, h.recorder.events.last().second)
+        assertEquals(null, h.engine.state.value.fadeAtMs)
+    }
+
+    @Test
+    fun `dragging the bar moves the song, and past the DJ's change the song is left whole`() = runTest {
+        val h = harness()
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.HORA_LOCA))
+        advanceTimeBy(durationMs) // warm-up song ends; the second is planned to swap at 1:40
+        runCurrent()
+        assertEquals(Exit.CutAt(100_000, swap = true), h.engine.state.value.plan!!.exit)
+        val song = h.currentUri
+
+        h.engine.seek(150_000)
+        runCurrent()
+
+        assertEquals("seek 150000", h.player.calls.last())
+        assertEquals(Exit.Full, h.engine.state.value.plan!!.exit)
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(song, h.currentUri) // no instant cut after landing past the planned point
     }
 
     @Test

@@ -63,6 +63,8 @@ import com.rvillarroel.djrodri.ui.theme.Space
 import com.rvillarroel.djrodri.voice.VoiceState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class PartyViewModel(app: Application) : AndroidViewModel(app) {
@@ -119,6 +121,23 @@ class PartyViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Your playlists, for starting a party right from this tab. */
+    val playlists = container.library.playlists.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val covers = MutableStateFlow<Map<String, List<String>>>(emptyMap())
+    val starting = MutableStateFlow(false)
+    val message = MutableStateFlow<String?>(null)
+
+    fun loadCovers(ids: List<String>) = viewModelScope.launch {
+        covers.value = ids.associateWith { container.library.coversOf(it) }
+    }
+
+    fun start(activity: android.app.Activity, playlistId: String, onStarted: () -> Unit) = viewModelScope.launch {
+        starting.value = true
+        message.value = container.startParty(activity, playlistId)
+        starting.value = false
+        if (message.value == null) onStarted()
+    }
+
     override fun onCleared() = voice.reset()
 }
 
@@ -138,6 +157,7 @@ fun PartyScreen(onLibrary: () -> Unit, vm: PartyViewModel = viewModel()) {
     }
 
     if (!state.active) {
+        var picking by remember { mutableStateOf(false) }
         Column(Modifier.fillMaxSize().padding(horizontal = Space.gutter), verticalArrangement = Arrangement.Center) {
             EmptyState(
                 DjIcons.Party,
@@ -148,9 +168,10 @@ fun PartyScreen(onLibrary: () -> Unit, vm: PartyViewModel = viewModel()) {
                     "Elige una playlist y dale play: el DJ decide el orden y cuándo cambiar."
                 },
                 action = "Elegir playlist",
-                onAction = onLibrary,
+                onAction = { picking = true },
             )
         }
+        if (picking) PlaylistPicker(vm, onDismiss = { picking = false })
         return
     }
 
@@ -213,12 +234,9 @@ private fun NowPlaying(state: PartyState, vm: PartyViewModel) {
     }
     dropMarkedAt?.let { Text("Drop guardado en ${formatTime(it)}", style = DjType.label, color = Dj.colors.accentBright) }
 
-    val progress = if (state.durationMs > 0) state.positionMs.toFloat() / state.durationMs else 0f
-    ProgressLine(progress, Modifier.padding(top = Space.md))
-    Row(Modifier.fillMaxWidth().padding(top = Space.xs), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(formatTime(state.positionMs), style = DjType.technicalSmall, color = Dj.colors.textTertiary)
-        Text(formatTime(state.durationMs), style = DjType.technicalSmall, color = Dj.colors.textTertiary)
-    }
+    // The planned change and your armed moves are marked on the bar, so you see where they land.
+    val marks = listOfNotNull((state.plan?.exit as? Exit.CutAt)?.positionMs, state.swapAtMs, state.fadeAtMs)
+    SeekBar(state.positionMs, state.durationMs, engine::seek, Modifier.padding(top = Space.sm), marks = marks)
 
     Row(Modifier.fillMaxWidth().padding(top = Space.sm), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         DjIconButton(DjIcons.Dislike, "No va: saltar y no volver a ponerla", engine::dislike, tint = Dj.colors.textSecondary)
@@ -239,20 +257,23 @@ private fun NowPlaying(state: PartyState, vm: PartyViewModel) {
 
     // Your own moves, on top of what the DJ does by itself.
     Row(Modifier.fillMaxWidth().padding(top = Space.md), horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
-        MoveButton(state.swapAtMs?.let { "Swap ${formatTime(it)}" } ?: "Drop swap", DjIcons.DropSwap, active = state.swapAtMs != null, onClick = engine::dropSwap, modifier = Modifier.weight(1f))
-        MoveButton("Fundido", DjIcons.Fade, onClick = engine::fadeNow, modifier = Modifier.weight(1f))
-        MoveButton("Otra vez", DjIcons.PullUp, onClick = engine::pullUp, modifier = Modifier.weight(1f))
+        ActionTile(
+            when {
+                state.swapAtMs != null -> "Swap ${formatTime(state.swapAtMs ?: 0)}"
+                state.swapNextSong -> "Swap próx."
+                else -> "Drop swap"
+            },
+            DjIcons.DropSwap,
+            engine::dropSwap,
+            Modifier.weight(1f),
+            active = state.swapAtMs != null || state.swapNextSong,
+        )
+        ActionTile(state.fadeAtMs?.let { "Fundir ${formatTime(it)}" } ?: "Fundido", DjIcons.Fade, engine::fadeNow, Modifier.weight(1f), active = state.fadeAtMs != null)
+        ActionTile("Otra vez", DjIcons.PullUp, engine::pullUp, Modifier.weight(1f))
+        ActionTile("Tranqui", DjIcons.Calm, engine::lessEnergy, Modifier.weight(1f))
+        ActionTile("Energía", DjIcons.Flame, engine::moreEnergy, Modifier.weight(1f))
     }
-    Row(Modifier.fillMaxWidth().padding(top = Space.xs), horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
-        MoveButton("Más tranqui", DjIcons.Calm, onClick = engine::lessEnergy, modifier = Modifier.weight(1f))
-        MoveButton("Más energía", DjIcons.Flame, onClick = engine::moreEnergy, modifier = Modifier.weight(1f))
-    }
-}
-
-/** A DJ move: neutral until it is armed, then red. */
-@Composable
-private fun MoveButton(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier, active: Boolean = false) {
-    if (active) PrimaryButton(label, onClick, modifier, icon = icon) else SecondaryButton(label, onClick, modifier, icon = icon)
+    state.notice?.let { InlineMessage(it, Modifier.padding(top = Space.xs), isError = false) }
 }
 
 @Composable
@@ -386,4 +407,42 @@ private fun PlanLine(state: PartyState) {
     val move = plan.entry is Entry.AtDrop || (plan.exit as? Exit.CutAt)?.swap == true || state.swapAtMs != null
     Text(PartyService.describe(state), style = DjType.cardTitle, color = if (move) Dj.colors.accentBright else Dj.colors.textPrimary)
     state.planNote?.let { Text(it, style = DjType.meta, color = Dj.colors.textSecondary, modifier = Modifier.padding(top = Space.xxs)) }
+}
+
+/** Start a party without leaving this tab: your playlists in a sheet, the ready ones first. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun PlaylistPicker(vm: PartyViewModel, onDismiss: () -> Unit) {
+    val playlists by vm.playlists.collectAsStateWithLifecycle()
+    val covers by vm.covers.collectAsStateWithLifecycle()
+    val starting by vm.starting.collectAsStateWithLifecycle()
+    val message by vm.message.collectAsStateWithLifecycle()
+    val activity = androidx.activity.compose.LocalActivity.current
+    val ordered = remember(playlists) { playlists.sortedByDescending { if (it.cachedTracks > 0) it.analyzedTracks.toFloat() / it.cachedTracks else 0f } }
+    LaunchedEffect(playlists) { vm.loadCovers(playlists.filter { it.imageUrl == null }.map { it.id }) }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Dj.colors.surface,
+    ) {
+        Column(Modifier.padding(horizontal = Space.gutter).padding(bottom = Space.xl)) {
+            Text("¿Qué suena en la fiesta?", style = DjType.section, color = Dj.colors.textPrimary)
+            Text(
+                if (starting) "Conectando con Spotify…" else "Las analizadas mezclan mejor: el DJ sabe dónde están sus coros y drops.",
+                style = DjType.meta,
+                color = Dj.colors.textSecondary,
+                modifier = Modifier.padding(top = Space.xxs, bottom = Space.sm),
+            )
+            message?.let { InlineMessage(it, Modifier.padding(bottom = Space.sm)) }
+            androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().height(460.dp)) {
+                items(ordered.size) { index ->
+                    val playlist = ordered[index]
+                    PlaylistLine(playlist, covers[playlist.id].orEmpty()) {
+                        if (!starting) activity?.let { vm.start(it, playlist.id, onDismiss) }
+                    }
+                }
+            }
+        }
+    }
 }

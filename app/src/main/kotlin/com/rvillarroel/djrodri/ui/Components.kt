@@ -8,6 +8,15 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -210,6 +219,39 @@ fun PlayButton(playing: Boolean, onClick: () -> Unit, modifier: Modifier = Modif
             tint = Dj.colors.onAccent,
             modifier = Modifier.size(size * 0.42f),
         )
+    }
+}
+
+/**
+ * A compact control: icon over a short label, so three or four fit in a row without cutting words. Neutral until
+ * [active], then red. For DJ moves and deck controls.
+ */
+@Composable
+fun ActionTile(label: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier, active: Boolean = false, enabled: Boolean = true) {
+    val haptics = LocalHapticFeedback.current
+    val source = remember { MutableInteractionSource() }
+    val bg by animateColorAsState(if (active) Dj.colors.accent else Dj.colors.surfaceSecondary, tween(Motion.FAST), label = "tile")
+    val fg = when {
+        !enabled -> Dj.colors.textTertiary
+        active -> Dj.colors.onAccent
+        else -> Dj.colors.textPrimary
+    }
+    Column(
+        modifier
+            .scale(pressScale(source))
+            .heightIn(min = 72.dp)
+            .clip(RoundedCornerShape(Radius.md))
+            .background(bg)
+            .clickable(interactionSource = source, indication = null, enabled = enabled) {
+                haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
+                onClick()
+            }
+            .padding(horizontal = Space.xxs, vertical = Space.sm),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(icon, null, tint = fg, modifier = Modifier.size(IconSize.md))
+        Text(label, style = DjType.label, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = Space.xxs))
     }
 }
 
@@ -427,6 +469,65 @@ private const val HIGH_ENERGY = 0.7
 fun ProgressLine(progress: Float, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(Dj.colors.progressInactive)) {
         Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(4.dp).background(Dj.colors.progressActive))
+    }
+}
+
+/**
+ * The song's timeline you can grab, like Spotify's: tap or drag anywhere, the time follows your finger, and the
+ * song moves when you let go. The thumb grows while you hold it. [marks] are points worth seeing (a planned change).
+ */
+@Composable
+fun SeekBar(positionMs: Long, durationMs: Long, onSeek: (Long) -> Unit, modifier: Modifier = Modifier, marks: List<Long> = emptyList()) {
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    var width by remember { mutableStateOf(1) }
+    val haptics = LocalHapticFeedback.current
+    val progress = dragging ?: if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+    val thumb by animateFloatAsState(if (dragging != null) 16f else 10f, tween(Motion.FAST), label = "thumb")
+    val active = Dj.colors.progressActive
+    val inactive = Dj.colors.progressInactive
+    val markColor = Dj.colors.textSecondary
+
+    Column(modifier.fillMaxWidth()) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(28.dp)
+                .onSizeChanged { width = it.width.coerceAtLeast(1) }
+                .pointerInput(durationMs) {
+                    detectTapGestures { offset ->
+                        haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
+                        onSeek(((offset.x / width).coerceIn(0f, 1f) * durationMs).toLong())
+                    }
+                }
+                .pointerInput(durationMs) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragging = (it.x / width).coerceIn(0f, 1f) },
+                        onHorizontalDrag = { change, _ -> dragging = (change.position.x / width).coerceIn(0f, 1f) },
+                        onDragEnd = {
+                            dragging?.let { onSeek((it * durationMs).toLong()) }
+                            dragging = null
+                        },
+                        onDragCancel = { dragging = null },
+                    )
+                },
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Canvas(Modifier.fillMaxWidth().height(28.dp)) {
+                val y = size.height / 2
+                val stroke = 4.dp.toPx()
+                drawLine(inactive, Offset(0f, y), Offset(size.width, y), strokeWidth = stroke, cap = StrokeCap.Round)
+                drawLine(active, Offset(0f, y), Offset(size.width * progress, y), strokeWidth = stroke, cap = StrokeCap.Round)
+                if (durationMs > 0) marks.forEach { m ->
+                    val x = size.width * (m.toFloat() / durationMs).coerceIn(0f, 1f)
+                    drawLine(markColor, Offset(x, y - 6.dp.toPx()), Offset(x, y + 6.dp.toPx()), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+                }
+                drawCircle(active, radius = thumb.dp.toPx() / 2 + 2.dp.toPx(), center = Offset(size.width * progress, y))
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(formatTime(dragging?.let { (it * durationMs).toLong() } ?: positionMs), style = DjType.technicalSmall, color = if (dragging != null) Dj.colors.accentBright else Dj.colors.textTertiary)
+            Text(formatTime(durationMs), style = DjType.technicalSmall, color = Dj.colors.textTertiary)
+        }
     }
 }
 

@@ -66,6 +66,14 @@ class TransitionPlannerTest {
     }
 
     @Test
+    fun `a skipped first song still ends the warm-up, or a night of skipping would never be mixed`() {
+        // Found on the phone: skipping through songs left every one of them on "Completa".
+        val plan = TransitionPlanner.plan(song("a"), song("b"), past = emptyList(), mode = DjMode.FIESTA, heard = 1)
+
+        assertEquals(true, (plan.exit as Exit.CutAt).swap)
+    }
+
+    @Test
     fun `the first songs of the night play whole as a warm-up`() {
         val plan = TransitionPlanner.plan(song("a"), song("b"), past = emptyList(), mode = DjMode.FIESTA)
 

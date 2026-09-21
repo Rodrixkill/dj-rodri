@@ -100,6 +100,12 @@ data class PartyState(
     val externalTrackUri: String? = null,
     /** Your drop swap, waiting for the current song's next drop at this position. */
     val swapAtMs: Long? = null,
+    /** Your drop swap waits for the next song: this one's last drop has passed. */
+    val swapNextSong: Boolean = false,
+    /** Your fade, waiting for this natural way out of the song. */
+    val fadeAtMs: Long? = null,
+    /** A short word about a move you asked for. */
+    val notice: String? = null,
     /** Why the next change is what it is: "Moderada · reggaetón → hip hop, estilos cercanos". */
     val planNote: String? = null,
     /** What the analysis knows of the song playing: tempo, key, energy for the Now Playing screen. */
@@ -163,6 +169,15 @@ class PartyEngine(
 
     /** Where your drop swap fires: the current song's next drop. */
     private var pendingSwapAtMs: Long? = null
+
+    /** Your drop swap came after this song's last drop: it waits for the next song. */
+    private var swapNextSong = false
+
+    /** Where your fade starts: the current song's next natural way out. */
+    private var pendingFadeAtMs: Long? = null
+
+    /** A short word for you about a move ("the swap waits for the next song"), shown until the song changes. */
+    private var notice: String? = null
 
     suspend fun start(playlistId: String, playlist: List<PartyTrack>, settings: PartySettings) = lock.withLock {
         stopTicker()
@@ -241,34 +256,81 @@ class PartyEngine(
 
     /**
      * 💥 Your drop swap: waits for the current song's next drop and, right there, the next song comes in on its
-     * drop. With no drop close enough ahead, it swaps now.
+     * drop. Never an instant jump: with no drop left in this song, the swap waits for the next song's drop.
+     * Tapping again cancels it.
      */
     fun dropSwap() = act { s ->
-        val position = currentPosition(s) ?: return@act
-        val song = s.current ?: return@act
-        val nextDrop = CueEstimator.estimate(song).drops
-            .firstOrNull { it > position + MIN_SWAP_WAIT_MS }
-            ?.takeIf { it - position <= MAX_SWAP_WAIT_MS }
-        if (nextDrop == null) {
-            record(PartyEventKind.DROP_SWAP)
-            execute(s.moveOn(s.nextDropMs()))
-        } else {
-            pendingSwapAtMs = nextDrop
-            publish()
+        if (pendingSwapAtMs != null || swapNextSong) {
+            pendingSwapAtMs = null
+            swapNextSong = false
+            notice = null
+            return@act publish()
         }
+        val position = currentPosition(s) ?: return@act
+        val nextDrop = nextDropAfter(s.current ?: return@act, position)
+        if (nextDrop != null) {
+            pendingSwapAtMs = nextDrop
+        } else {
+            swapNextSong = true
+            notice = "Ya pasó el drop de esta canción: el swap queda para la próxima"
+        }
+        publish()
     }
 
-    /** 🌊 Spotify's fade into the next song, now, wherever the current one is. Without crossfade, a clean change. */
+    /**
+     * 🌊 Spotify's fade into the next song, at the next natural way out of this one (the end of a chorus, a phrase,
+     * an instrumental stretch), never in the middle of a line. With none left, at the song's own end. Tapping again
+     * cancels it.
+     */
     fun fadeNow() = act { s ->
-        val playing = player.state.value ?: return@act
+        if (pendingFadeAtMs != null) {
+            pendingFadeAtMs = null
+            return@act publish()
+        }
         val position = currentPosition(s) ?: return@act
-        record(PartyEventKind.FADE_NOW)
-        if (fadeMs == 0L) return@act execute(s.moveOn(0))
-        val now = clock()
-        // The queue needs a moment before the jump, or the fade goes to Spotify's own pick.
-        val fadeFrom = position + QUEUE_LEAD_MS
-        beginHandoff(playing, s.moveOn(0), fadeFrom, target = fadeFrom, position, now)
+        val song = s.current ?: return@act
+        pendingFadeAtMs = naturalExitAfter(song, position) ?: (song.durationMs - fadeMs - FADE_MARGIN_MS).coerceAtLeast(position + MIN_SWAP_WAIT_MS)
         publish()
+    }
+
+    /**
+     * Move the song to [positionMs], like dragging Spotify's bar. Past the DJ's planned change, the song is yours:
+     * it plays whole from there instead of being cut the instant you land. Pending moves are re-aimed at what is
+     * still ahead.
+     */
+    fun seek(positionMs: Long) = act { s ->
+        // Mid-handoff the next song is already queued and the fade under way: moving now would break it.
+        if (handoff != null) return@act
+        val song = s.current ?: return@act
+        val target = positionMs.coerceIn(0, song.durationMs - END_GUARD_MS)
+        lastCommandAtMs = clock()
+        player.seekTo(target)
+        (s.plan?.exit as? Exit.CutAt)?.let { cut -> if (target >= cut.positionMs - settings.cutLeadMs) s.keepFull() }
+        pendingSwapAtMs?.let { pendingSwapAtMs = nextDropAfter(song, target) ?: run { swapNextSong = true; null } }
+        pendingFadeAtMs?.let { pendingFadeAtMs = naturalExitAfter(song, target) ?: (song.durationMs - fadeMs - FADE_MARGIN_MS).coerceAtLeast(target) }
+        publish()
+    }
+
+    private fun nextDropAfter(song: TrackProfile, positionMs: Long): Long? =
+        CueEstimator.estimate(song).drops.firstOrNull { it > positionMs + MIN_SWAP_WAIT_MS }
+
+    /** The ends of choruses and the DJ's own cut points: places a song can be left without cutting a line. */
+    private fun naturalExitAfter(song: TrackProfile, positionMs: Long): Long? {
+        val chorusEnds = song.chorus?.occurrences?.map { it.endMs }.orEmpty()
+        val cuts = CueEstimator.estimate(song).cuts.map { it.positionMs }
+        return (chorusEnds + cuts)
+            .filter { it > positionMs + MIN_SWAP_WAIT_MS && it < song.durationMs - fadeMs }
+            .minOrNull()
+    }
+
+    /** A swap you asked for after this song's last drop, armed on the next song's first drop still ahead. */
+    private fun armDeferredSwap(song: TrackProfile?, fromMs: Long) {
+        if (!swapNextSong || song == null) return
+        nextDropAfter(song, fromMs)?.let {
+            pendingSwapAtMs = it
+            swapNextSong = false
+            notice = null
+        }
     }
 
     /** 🔁 Once more: the song goes back to the drop the crowd just heard, the pull-up of reggaeton DJs. */
@@ -381,6 +443,7 @@ class PartyEngine(
         val plan = s.plan
         val cut = plan?.exit as? Exit.CutAt
         val swapAt = pendingSwapAtMs
+        val fadeAt = pendingFadeAtMs
         val canFade = fadeReady(s)
         when {
             playing.isPaused && position >= playing.durationMs - STOPPED_AT_END_MS -> {
@@ -389,6 +452,12 @@ class PartyEngine(
                 execute(s.onTrackEnded())
             }
             playing.isPaused -> Unit
+            fadeAt != null && position >= fadeAt - settings.cutLeadMs - (if (canFade) QUEUE_LEAD_MS else 0) -> {
+                // Your fade, at the natural way out you were waiting for.
+                pendingFadeAtMs = null
+                record(PartyEventKind.FADE_NOW)
+                if (canFade) beginHandoff(playing, s.moveOn(0), fadeAt, target = fadeAt, position, now) else execute(s.moveOn(0))
+            }
             swapAt != null && position >= swapAt - settings.cutLeadMs -> {
                 // Your drop swap, on the drop you were waiting for.
                 record(PartyEventKind.DROP_SWAP)
@@ -432,9 +501,21 @@ class PartyEngine(
         handoff = null
         pendingSwapAtMs = null
         switchNow(uriOf(command.trackId), command.fromMs)
+        movesForNewSong(command.fromMs)
         publish()
         session?.let { recorder.statsChanged(sessionId, it.stats, null) }
         saveSnapshot()
+    }
+
+    /**
+     * A new song is playing (entered at [entryMs]): your fade and swap belonged to the last one, except a swap you
+     * deferred, which is armed now on this song's next drop.
+     */
+    private fun movesForNewSong(entryMs: Long) {
+        pendingSwapAtMs = null
+        pendingFadeAtMs = null
+        if (!swapNextSong) notice = null
+        armDeferredSwap(session?.current, entryMs)
     }
 
     /** The clean change: play the song, and land on its drop if it enters there. */
@@ -505,6 +586,9 @@ class PartyEngine(
             finish()
             return
         }
+        // The song is changing: moves aimed at this one are done (a deferred swap waits for the new one).
+        pendingSwapAtMs = null
+        pendingFadeAtMs = null
         val uri = uriOf(command.trackId)
         // Already waiting in Spotify's queue (left there earlier): queueing it again would play it twice.
         if (queued.firstOrNull() != uri) {
@@ -533,6 +617,7 @@ class PartyEngine(
                 handoff = null
                 lastCommandAtMs = now
                 if (h.entryMs > 0) player.seekTo(h.entryMs)
+                movesForNewSong(h.entryMs)
                 saveSnapshot()
             }
             playing.trackUri != h.fromUri || now >= h.deadlineMs -> {
@@ -617,6 +702,9 @@ class PartyEngine(
             intent = s.intent,
             externalTrackUri = external,
             swapAtMs = pendingSwapAtMs,
+            swapNextSong = swapNextSong,
+            fadeAtMs = pendingFadeAtMs,
+            notice = notice,
             planNote = s.note,
             currentProfile = song,
             upcoming = s.queue.take(UP_NEXT).mapNotNull { tracks[it.id]?.source },
@@ -642,8 +730,8 @@ class PartyEngine(
         const val HANDOFF_TIMEOUT_MS = 4_000L
         /** A drop closer than this cannot be waited for: the swap would fire before you let go of the button. */
         const val MIN_SWAP_WAIT_MS = 1_500L
-        /** Nobody waits a minute for a swap they asked for: beyond this it happens now. */
-        const val MAX_SWAP_WAIT_MS = 45_000L
+        /** A seek never lands in the very last seconds, where Spotify would already be ending the song. */
+        const val END_GUARD_MS = 3_000L
         /** "Once more" replays the drop just heard, not one that only just started. */
         const val PULL_UP_MIN_MS = 2_000L
     }

@@ -76,6 +76,8 @@ object TransitionPlanner {
     /**
      * Decides how [current] ends and how [next] begins, given the DJ's own [past] transitions this session.
      * Manual skips are not in [past]: they are your decisions, not the DJ's, and must not spend its budget.
+     * [heard] counts every song of the night however it ended, skips included: the warm-up is over after the first
+     * song, even when you skipped it, or a night of skipping would keep the DJ from ever mixing.
      */
     fun plan(
         current: TrackProfile,
@@ -83,11 +85,12 @@ object TransitionPlanner {
         past: List<Transition>,
         mode: DjMode,
         keepFull: Boolean = false,
+        heard: Int = past.size,
     ): Transition {
         // The last song of the night always plays to its end: cutting it would only cut the party short.
         if (next == null) return Transition(Exit.Full, Entry.FromStart)
-        chooseSwap(current, next, past, mode, keepFull)?.let { return it }
-        val exit = chooseExit(current, next, past, mode, keepFull)
+        chooseSwap(current, next, past, mode, keepFull, heard)?.let { return it }
+        val exit = chooseExit(current, next, past, mode, keepFull, heard)
         // A drop entry only makes sense after a cut: after a natural ending Spotify is already fading into the start.
         val entry = if (exit is Exit.CutAt) chooseEntry(current, next, past, mode) else Entry.FromStart
         return Transition(exit, entry)
@@ -100,13 +103,13 @@ object TransitionPlanner {
      * What any early exit needs: not "Completa", not a radio edit, not right after a cut, and budget left.
      * The budget follows the style: rock and tropical songs are songs, and get cut half as often as electronic ones.
      */
-    private fun mayCut(current: TrackProfile, past: List<Transition>, mode: DjMode, keepFull: Boolean): Boolean {
+    private fun mayCut(current: TrackProfile, past: List<Transition>, mode: DjMode, keepFull: Boolean, heard: Int): Boolean {
         if (keepFull || current.durationMs < SHORT_SONG_MS) return false
         if (past.lastOrNull()?.exit is Exit.CutAt) return false
         // Counting this song in the ratio means the first songs of the night always play whole: a warm-up.
         val cutsIfWeCut = past.count { it.exit is Exit.CutAt } + 1
         val budget = (mode.maxCutRatio * StyleFamily.of(current).cutFactor).coerceAtMost(MAX_CUT_RATIO)
-        return cutsIfWeCut.toDouble() / (past.size + 1) <= budget
+        return cutsIfWeCut.toDouble() / (maxOf(past.size, heard) + 1) <= budget
     }
 
     /** A crossfade only where a DJ would blend: long-blend styles on both sides and not two voices on top of each other. */
@@ -122,8 +125,8 @@ object TransitionPlanner {
      * Between two electronic tracks it is the natural move: they are built in eight-bar phrases, so a drop guessed
      * from the tempo lands where the music turns, and the swap is allowed twice as often.
      */
-    private fun chooseSwap(current: TrackProfile, next: TrackProfile, past: List<Transition>, mode: DjMode, keepFull: Boolean): Transition? {
-        if (!mayCut(current, past, mode, keepFull)) return null
+    private fun chooseSwap(current: TrackProfile, next: TrackProfile, past: List<Transition>, mode: DjMode, keepFull: Boolean, heard: Int): Transition? {
+        if (!mayCut(current, past, mode, keepFull, heard)) return null
         // A swap belongs to EDM, reggaeton, hip hop, dancehall. Swapping a salsa or a rock song sounds like a glitch.
         if (!StyleFamily.of(current).swaps || !StyleFamily.of(next).swaps) return null
         if (Compatibility.match(current, next).genre < MIN_SWAP_AFFINITY) return null
@@ -145,8 +148,8 @@ object TransitionPlanner {
         return Transition(Exit.CutAt(swapAt.positionMs, swap = true), Entry.AtDrop(drop.positionMs))
     }
 
-    private fun chooseExit(current: TrackProfile, next: TrackProfile, past: List<Transition>, mode: DjMode, keepFull: Boolean): Exit {
-        if (!mayCut(current, past, mode, keepFull)) return Exit.Full
+    private fun chooseExit(current: TrackProfile, next: TrackProfile, past: List<Transition>, mode: DjMode, keepFull: Boolean, heard: Int): Exit {
+        if (!mayCut(current, past, mode, keepFull, heard)) return Exit.Full
 
         val candidates = CueEstimator.estimate(current).cuts.filter { it.confidence >= mode.minCutConfidence }
         if (candidates.isEmpty()) return Exit.Full

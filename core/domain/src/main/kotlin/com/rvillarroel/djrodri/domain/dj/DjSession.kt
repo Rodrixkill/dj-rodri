@@ -211,7 +211,7 @@ class DjSession(
 
     private fun replan() {
         val song = current
-        plan = song?.let { TransitionPlanner.plan(it, upcoming.firstOrNull(), djTransitions, mode, keepCurrentFull) }
+        plan = song?.let { TransitionPlanner.plan(it, upcoming.firstOrNull(), djTransitions, mode, keepCurrentFull, heard = played.size) }
         note = song?.let { TransitionPlanner.explain(it, upcoming.firstOrNull()) }
     }
 

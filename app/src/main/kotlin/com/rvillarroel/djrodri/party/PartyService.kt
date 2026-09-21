@@ -109,6 +109,7 @@ class PartyService : LifecycleService() {
             val next = state.next?.name
             fun time(ms: Long) = "%d:%02d".format(ms / 60_000, ms / 1000 % 60)
             state.swapAtMs?.let { return "💥 Tu drop swap en ${time(it)}" + (next?.let { " → drop de $it" } ?: "") }
+            state.fadeAtMs?.let { return "🌊 Tu fundido en ${time(it)}" + (next?.let { " → $it" } ?: "") }
             return when (val exit = plan.exit) {
                 Exit.Full -> if (next != null) "Completa · después: $next" else "Completa · última canción"
                 is Exit.CutAt -> when {
