@@ -116,6 +116,20 @@ class DjSession(
      */
     fun moveOn(entryMs: Long): PlayCommand? = advance(recorded = null, entryMs = entryMs)
 
+    /**
+     * [trackId] comes next: Spotify already has it lined up in its queue, and the queue cannot be emptied from
+     * outside, so the set bends around it instead of fighting it. False when the song is no longer to come.
+     */
+    fun promote(trackId: String): Boolean {
+        val index = upcoming.indexOfFirst { it.id == trackId }
+        if (index < 0) return false
+        if (index > 0) {
+            upcoming.add(0, upcoming.removeAt(index))
+            replan()
+        }
+        return true
+    }
+
     /** The next song's drop, even a guessed one: when you ask for the swap, a guess beats no swap. */
     fun nextDropMs(): Long = upNext?.let { CueEstimator.estimate(it).drop?.positionMs } ?: 0
 

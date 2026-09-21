@@ -154,6 +154,9 @@ class PartyEngine(
 
     private var handoff: Handoff? = null
 
+    /** Songs this party put in Spotify's queue that Spotify has not played yet. Its queue cannot be emptied. */
+    private val queued = ArrayDeque<String>()
+
     /** Where your drop swap fires: the current song's next drop. */
     private var pendingSwapAtMs: Long? = null
 
@@ -339,11 +342,17 @@ class PartyEngine(
         val playing = player.state.value ?: return
         val now = clock()
 
+        // A queued song counts as used up once Spotify plays it.
+        playing.trackUri?.let { queued.remove(it) }
+
         handoff?.let { h ->
             followHandoff(h, playing, now)
             publish()
             return
         }
+
+        // A song left in Spotify's queue will be what the next fade goes to: if it is still to come, it comes next.
+        queued.firstOrNull()?.let { stale -> idOf(stale)?.let { s.promote(it) } }
 
         if (playing.trackUri != uriOf(song.id)) {
             // Spotify takes a moment to report the song we just asked for.
@@ -360,6 +369,7 @@ class PartyEngine(
         val plan = s.plan
         val cut = plan?.exit as? Exit.CutAt
         val swapAt = pendingSwapAtMs
+        val canFade = fadeReady(s)
         when {
             playing.isPaused && position >= playing.durationMs - STOPPED_AT_END_MS -> {
                 // The app slept through the end and Spotify stopped: carry on as if it ended normally.
@@ -377,14 +387,14 @@ class PartyEngine(
                 record(PartyEventKind.DROP_SWAP)
                 execute(s.onCutPointReached())
             }
-            fadeMs > 0 && cut != null && cut.blend && position >= cut.positionMs - settings.cutLeadMs - QUEUE_LEAD_MS -> {
+            canFade && cut != null && cut.blend && position >= cut.positionMs - settings.cutLeadMs - QUEUE_LEAD_MS -> {
                 val cutMs = cut.positionMs
                 record(if (plan.entry is Entry.AtDrop) PartyEventKind.DROP_ENTRY else PartyEventKind.CUT)
                 // A cut already inside the song's last seconds needs no jump: its own fade is about to start.
                 val fadeFrom = cutMs.takeIf { it < fadeStartOf(playing) }
                 beginHandoff(playing, s.onCutPointReached(), fadeFrom, target = fadeFrom ?: fadeStartOf(playing), position, now)
             }
-            fadeMs > 0 && position >= fadeStartOf(playing) - QUEUE_LEAD_MS -> {
+            canFade && position >= fadeStartOf(playing) - QUEUE_LEAD_MS -> {
                 record(PartyEventKind.FULL)
                 beginHandoff(playing, s.onTrackEnded(), fadeFromMs = null, target = fadeStartOf(playing), position, now)
             }
@@ -419,16 +429,52 @@ class PartyEngine(
     private suspend fun switchNow(uri: String, fromMs: Long) {
         lastCommandAtMs = clock()
         external = null
-        if (fromMs > 0) {
-            if (settings.dropWithPause) player.pause()
-            player.play(uri)
-            withTimeoutOrNull(SWITCH_TIMEOUT_MS) { player.state.first { it?.trackUri == uri } }
-            player.seekTo(fromMs)
-            if (settings.dropWithPause) player.resume()
+        // Already in Spotify's queue: moving on to it uses it up. Playing it directly would leave it there to repeat.
+        val viaQueue = uri in queued
+        val flushed = flushQueue(until = uri)
+        val pauseFirst = fromMs > 0 && settings.dropWithPause
+        if (pauseFirst && !flushed) player.pause()
+        if (viaQueue) {
+            player.skipNext()
+            queued.remove(uri)
         } else {
             player.play(uri)
         }
+        if (fromMs > 0) {
+            withTimeoutOrNull(SWITCH_TIMEOUT_MS) { player.state.first { it?.trackUri == uri } }
+            player.seekTo(fromMs)
+        }
+        if (pauseFirst || flushed) player.resume()
     }
+
+    /**
+     * A fade goes to whatever is first in Spotify's queue. It can only be trusted when that is nothing, or the very
+     * song the DJ wants next.
+     */
+    private fun fadeReady(s: DjSession): Boolean {
+        if (fadeMs <= 0) return false
+        val stale = queued.firstOrNull() ?: return true
+        return s.upNext?.let { uriOf(it.id) } == stale
+    }
+
+    /**
+     * Uses up songs left in Spotify's queue that are no longer coming (you skipped while a fade was being prepared),
+     * paused so nobody hears them. Otherwise they would surface at the next fade, and every fade after it.
+     */
+    private suspend fun flushQueue(until: String): Boolean {
+        // Everything queued before the song we want (or everything, when it is not queued).
+        val stale = queued.takeWhile { it != until }
+        if (stale.isEmpty()) return false
+        player.pause()
+        for (uri in stale) {
+            player.skipNext()
+            withTimeoutOrNull(SWITCH_TIMEOUT_MS) { player.state.first { it?.trackUri == uri } }
+            queued.remove(uri)
+        }
+        return true
+    }
+
+    private fun idOf(uri: String): String? = tracks.values.firstOrNull { it.source.uri == uri }?.source?.id
 
     private suspend fun refreshFade() {
         fadeMs = if (settings.useSpotifyFade) player.crossfadeMs() ?: 0 else 0
@@ -448,7 +494,11 @@ class PartyEngine(
             return
         }
         val uri = uriOf(command.trackId)
-        player.queue(uri)
+        // Already waiting in Spotify's queue (left there earlier): queueing it again would play it twice.
+        if (queued.firstOrNull() != uri) {
+            player.queue(uri)
+            queued.addLast(uri)
+        }
         lastCommandAtMs = now
         handoff = Handoff(
             fromUri = playing.trackUri ?: "",
@@ -566,10 +616,14 @@ class PartyEngine(
         const val SWITCH_TIMEOUT_MS = 3_000L
         const val STOPPED_AT_END_MS = 1_500L
         const val SNAPSHOT_EVERY_MS = 10_000L
-        /** How early the next song is queued: the spike showed Spotify needs well under a second to take it. */
-        const val QUEUE_LEAD_MS = 1_500L
-        /** A cut lands this far before the fade start, so the fade begins the moment the jump lands. */
-        const val FADE_MARGIN_MS = 1_000L
+        /** How early the next song is queued: on the phone Spotify once needed more than 0.8 s to take it. */
+        const val QUEUE_LEAD_MS = 4_000L
+
+        /**
+         * A cut lands this far before the fade window. Landing inside it makes Spotify skip dry instead of fading
+         * (tested on the phone at 8 and 12 s from the end); two seconds before it (14 s) faded in 0.65 s.
+         */
+        const val FADE_MARGIN_MS = 2_000L
         const val HANDOFF_TIMEOUT_MS = 4_000L
         /** A drop closer than this cannot be waited for: the swap would fire before you let go of the button. */
         const val MIN_SWAP_WAIT_MS = 1_500L

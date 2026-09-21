@@ -41,7 +41,8 @@ class PartyEngineTest {
         var crossfade: Long? = null
         /** False plays Spotify's own next song even when something was queued. */
         var honorsQueue = true
-        private var queued: String? = null
+        /** Like the real one: first in, first out, and nothing takes a song out except playing it. */
+        val queued = ArrayDeque<String>()
 
         init {
             scope.launch {
@@ -56,15 +57,20 @@ class PartyEngineTest {
             val fade = crossfade ?: return
             val s = state.value?.takeIf { !it.isPaused } ?: return
             if (s.positionAt(clock()) < s.durationMs - fade) return
-            val next = queued?.takeIf { honorsQueue } ?: SPOTIFY_OWN_PICK
-            queued = null
+            val next = if (honorsQueue) queued.removeFirstOrNull() ?: SPOTIFY_OWN_PICK else SPOTIFY_OWN_PICK
             calls += "fade $next"
             state.value = PlayerState(next, durations[next] ?: 200_000, 0, isPaused = false, capturedAtMs = clock())
         }
 
         override fun queue(uri: String) {
             calls += "queue $uri"
-            queued = uri
+            queued.addLast(uri)
+        }
+
+        override fun skipNext() {
+            val next = queued.removeFirstOrNull() ?: SPOTIFY_OWN_PICK
+            calls += "skipNext → $next"
+            state.value = PlayerState(next, durations[next] ?: 200_000, 0, isPaused = false, capturedAtMs = clock())
         }
 
         override suspend fun crossfadeMs() = crossfade
@@ -252,11 +258,11 @@ class PartyEngineTest {
         val callsBefore = h.player.calls.size
 
         h.engine.fadeNow()
-        advanceTimeBy(3_000)
+        advanceTimeBy(7_000) // 4 s for the queue to settle, then 2 s before the fade window
         runCurrent()
 
         val second = h.currentUri
-        assertEquals(listOf("queue $second", "seek ${durationMs - fade - 1_000}", "fade $second"), h.player.calls.drop(callsBefore))
+        assertEquals(listOf("queue $second", "seek ${durationMs - fade - 2_000}", "fade $second"), h.player.calls.drop(callsBefore))
         assertEquals(PartyEventKind.FADE_NOW, h.recorder.events.last().second)
     }
 
@@ -454,7 +460,7 @@ class PartyEngineTest {
         runCurrent()
 
         val third = h.currentUri
-        val fadeStart = durationMs - fade - 1_000
+        val fadeStart = durationMs - fade - 2_000
         assertEquals(listOf("queue $third", "seek $fadeStart", "fade $third", "seek 20000"), h.player.calls.drop(callsBefore))
         assertEquals(PartyEventKind.DROP_ENTRY, h.recorder.events.last().second)
         assertEquals(1, h.engine.state.value.stats.dropEntries)
@@ -493,7 +499,9 @@ class PartyEngineTest {
         runCurrent()
 
         val second = h.currentUri
-        assertEquals(listOf("fade $SPOTIFY_OWN_PICK", "play $second"), h.player.calls.takeLast(2))
+        // Ours is still first in Spotify's queue: moving on uses it up instead of leaving it to play again later.
+        assertEquals(listOf("fade $SPOTIFY_OWN_PICK", "skipNext → $second"), h.player.calls.takeLast(2))
+        assertTrue(h.player.queued.isEmpty())
         assertEquals(null, h.engine.state.value.externalTrackUri)
     }
 
@@ -516,13 +524,58 @@ class PartyEngineTest {
         h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
         advanceTimeBy(durationMs - fade - 1_000) // the next song is already queued, the fade has not started
         runCurrent()
+        val skipped = h.player.calls.last().removePrefix("queue ")
         assertTrue(h.player.calls.last().startsWith("queue"))
 
         h.engine.next()
         runCurrent()
 
-        assertEquals("play ${h.currentUri}", h.player.calls.last())
+        // The song you skipped was already in Spotify's queue: it is used up while paused, never heard later.
+        assertEquals(listOf("pause", "skipNext → $skipped", "play ${h.currentUri}", "resume"), h.player.calls.takeLast(4))
+        assertTrue(h.player.queued.isEmpty())
         assertEquals(1, h.engine.state.value.stats.manualSkips)
+    }
+
+    @Test
+    fun `after a skip mid-fade, the next fades still go to the DJ's songs and not to a leftover`() = runTest {
+        // Songs with no lyrics play whole, so every change is a fade.
+        val h = Harness(this, 6) { id -> partyTrack(id).let { it.copy(profile = it.profile.copy(chorus = null)) } }
+        h.player.crossfade = fade
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
+        advanceTimeBy(durationMs - fade - 1_000)
+        runCurrent()
+        h.engine.next()
+        runCurrent()
+        val afterSkip = h.currentUri
+
+        advanceTimeBy(durationMs - fade + 500)
+        runCurrent()
+
+        val next = h.currentUri
+        assertTrue(next != afterSkip)
+        assertEquals(listOf("queue $next", "fade $next"), h.player.calls.takeLast(2))
+    }
+
+    @Test
+    fun `a leftover in Spotify's queue that is still to come is moved up, so the fade uses it up`() = runTest {
+        val h = harness()
+        h.player.crossfade = fade
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
+        runCurrent()
+        // Something queued earlier and not yet heard, which the set would only play later.
+        val later = h.engine.profiles.map { "spotify:track:${it.id}" }.last { it != h.currentUri && it != h.engine.state.value.next?.uri }
+        h.player.queue(later)
+        h.engine.javaClass.getDeclaredField("queued").apply { isAccessible = true }.let {
+            @Suppress("UNCHECKED_CAST")
+            (it.get(h.engine) as ArrayDeque<String>).addLast(later)
+        }
+
+        advanceTimeBy(durationMs - fade + 500)
+        runCurrent()
+
+        assertEquals(later, h.currentUri)
+        assertEquals("fade $later", h.player.calls.last())
+        assertEquals(1, h.player.calls.count { it == "queue $later" })
     }
 
     @Test
