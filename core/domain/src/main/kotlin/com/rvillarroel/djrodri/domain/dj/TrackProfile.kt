@@ -27,8 +27,16 @@ data class TrackProfile(
 
 data class CuePoint(val positionMs: Long, val confidence: Double)
 
-/** [cuts] are natural places to leave the song, in playback order. */
-data class Cues(val drop: CuePoint?, val cuts: List<CuePoint>)
+/**
+ * [cuts] are natural places to leave the song, in playback order. [swapPoint] is where its second drop hits, the
+ * moment a drop swap hands over to the next song's drop. [drops] is every drop or chorus start, in order.
+ */
+data class Cues(
+    val drop: CuePoint?,
+    val cuts: List<CuePoint>,
+    val swapPoint: CuePoint? = null,
+    val drops: List<Long> = emptyList(),
+)
 
 object CueEstimator {
     /** A "drop" in the first seconds is just the song starting; entering there adds nothing. */
@@ -91,7 +99,23 @@ object CueEstimator {
             .distinctBy { it.positionMs }
             .sortedBy { it.positionMs }
 
-        return Cues(drop, cuts)
+        // The second drop: the crowd already had the first, and the build-up to this one is what gets swapped.
+        val swapPoint = when {
+            chorus != null -> chorus.occurrences.getOrNull(1)?.let { CuePoint(it.startMs, chorus.confidence) }
+            grid != null -> CuePoint(grid.boundaryNear(track.durationMs / 2), GRID_CUT_CONFIDENCE)
+            else -> null
+        }?.takeIf { it.positionMs >= MIN_CUT_MS && it.positionMs <= track.durationMs - MIN_TAIL_MS }
+
+        val drops = buildList {
+            track.userDropMs?.let(::add)
+            chorus?.occurrences?.forEach { add(it.startMs) }
+            if (chorus == null && grid != null) {
+                add(grid.boundaryNear(track.durationMs / 4))
+                add(grid.boundaryNear(track.durationMs / 2))
+            }
+        }.filter { it >= MIN_DROP_MS && it <= track.durationMs - MIN_TAIL_MS }.distinct().sorted()
+
+        return Cues(drop, cuts, swapPoint, drops)
     }
 
     /** The phrase grid of a song, counted from its start: only possible when the tempo is known. */

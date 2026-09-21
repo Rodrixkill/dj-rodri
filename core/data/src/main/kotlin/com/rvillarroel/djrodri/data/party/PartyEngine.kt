@@ -1,6 +1,7 @@
 package com.rvillarroel.djrodri.data.party
 
 import com.rvillarroel.djrodri.data.analysis.SourceTrack
+import com.rvillarroel.djrodri.domain.dj.CueEstimator
 import com.rvillarroel.djrodri.domain.dj.DjIntent
 import com.rvillarroel.djrodri.domain.dj.DjMode
 import com.rvillarroel.djrodri.domain.dj.DjSession
@@ -41,7 +42,15 @@ data class PartySettings(
     val useSpotifyFade: Boolean = true,
 )
 
-enum class PartyEventKind { FULL, CUT, DROP_ENTRY, SKIP, PREVIOUS, DISLIKE, KEEP_FULL, EXTERNAL_CHANGE }
+enum class PartyEventKind {
+    FULL, CUT, DROP_ENTRY, SKIP, PREVIOUS, DISLIKE, KEEP_FULL, EXTERNAL_CHANGE,
+    /** A song's drop replaced by the next one's, by the DJ or by you. */
+    DROP_SWAP,
+    /** You asked for Spotify's fade right now. */
+    FADE_NOW,
+    /** You sent the song back to its drop, to play it again. */
+    PULL_UP,
+}
 
 /**
  * A party frozen on disk. HyperOS kills background apps without asking, so the party is saved on every song and
@@ -89,6 +98,8 @@ data class PartyState(
     val intent: DjIntent = DjIntent.Default,
     /** Set when Spotify is playing something the DJ did not choose; the DJ stops deciding until you press ⏭. */
     val externalTrackUri: String? = null,
+    /** Your drop swap, waiting for the current song's next drop at this position. */
+    val swapAtMs: Long? = null,
 )
 
 /**
@@ -140,6 +151,9 @@ class PartyEngine(
     }
 
     private var handoff: Handoff? = null
+
+    /** Where your drop swap fires: the current song's next drop. */
+    private var pendingSwapAtMs: Long? = null
 
     suspend fun start(playlistId: String, playlist: List<PartyTrack>, settings: PartySettings) = lock.withLock {
         stopTicker()
@@ -216,6 +230,58 @@ class PartyEngine(
         publish()
     }
 
+    /**
+     * 💥 Your drop swap: waits for the current song's next drop and, right there, the next song comes in on its
+     * drop. With no drop close enough ahead, it swaps now.
+     */
+    fun dropSwap() = act { s ->
+        val position = currentPosition(s) ?: return@act
+        val song = s.current ?: return@act
+        val nextDrop = CueEstimator.estimate(song).drops
+            .firstOrNull { it > position + MIN_SWAP_WAIT_MS }
+            ?.takeIf { it - position <= MAX_SWAP_WAIT_MS }
+        if (nextDrop == null) {
+            record(PartyEventKind.DROP_SWAP)
+            execute(s.moveOn(s.nextDropMs()))
+        } else {
+            pendingSwapAtMs = nextDrop
+            publish()
+        }
+    }
+
+    /** 🌊 Spotify's fade into the next song, now, wherever the current one is. Without crossfade, a clean change. */
+    fun fadeNow() = act { s ->
+        val playing = player.state.value ?: return@act
+        val position = currentPosition(s) ?: return@act
+        record(PartyEventKind.FADE_NOW)
+        if (fadeMs == 0L) return@act execute(s.moveOn(0))
+        val now = clock()
+        // The queue needs a moment before the jump, or the fade goes to Spotify's own pick.
+        val fadeFrom = position + QUEUE_LEAD_MS
+        beginHandoff(playing, s.moveOn(0), fadeFrom, target = fadeFrom, position, now)
+        publish()
+    }
+
+    /** 🔁 Once more: the song goes back to the drop the crowd just heard, the pull-up of reggaeton DJs. */
+    fun pullUp() = act { s ->
+        // Mid-handoff the next song is already queued: rewinding now would fade into it at the wrong time.
+        if (handoff != null) return@act
+        val position = currentPosition(s) ?: return@act
+        val drops = CueEstimator.estimate(s.current ?: return@act).drops
+        val back = drops.lastOrNull { it <= position - PULL_UP_MIN_MS } ?: drops.firstOrNull() ?: return@act
+        record(PartyEventKind.PULL_UP)
+        pendingSwapAtMs = null
+        lastCommandAtMs = clock()
+        player.seekTo(back)
+        publish()
+    }
+
+    private fun currentPosition(s: DjSession): Long? {
+        val playing = player.state.value ?: return null
+        val song = s.current ?: return null
+        return playing.takeIf { it.trackUri == uriOf(song.id) }?.positionAt(clock())
+    }
+
     fun moreEnergy() = act { s -> s.moreEnergy(); publish() }
     fun lessEnergy() = act { s -> s.lessEnergy(); publish() }
 
@@ -290,6 +356,8 @@ class PartyEngine(
 
         val position = playing.positionAt(now)
         val plan = s.plan
+        val cut = plan?.exit as? Exit.CutAt
+        val swapAt = pendingSwapAtMs
         when {
             playing.isPaused && position >= playing.durationMs - STOPPED_AT_END_MS -> {
                 // The app slept through the end and Spotify stopped: carry on as if it ended normally.
@@ -297,9 +365,18 @@ class PartyEngine(
                 execute(s.onTrackEnded())
             }
             playing.isPaused -> Unit
-            fadeMs > 0 && plan?.exit is Exit.CutAt &&
-                position >= (plan.exit as Exit.CutAt).positionMs - settings.cutLeadMs - QUEUE_LEAD_MS -> {
-                val cutMs = (plan.exit as Exit.CutAt).positionMs
+            swapAt != null && position >= swapAt - settings.cutLeadMs -> {
+                // Your drop swap, on the drop you were waiting for.
+                record(PartyEventKind.DROP_SWAP)
+                execute(s.moveOn(s.nextDropMs()))
+            }
+            // The DJ's drop swap is always a dry cut: a fade would blur the hit.
+            cut != null && cut.swap && position >= cut.positionMs - settings.cutLeadMs -> {
+                record(PartyEventKind.DROP_SWAP)
+                execute(s.onCutPointReached())
+            }
+            fadeMs > 0 && cut != null && !cut.swap && position >= cut.positionMs - settings.cutLeadMs - QUEUE_LEAD_MS -> {
+                val cutMs = cut.positionMs
                 record(if (plan.entry is Entry.AtDrop) PartyEventKind.DROP_ENTRY else PartyEventKind.CUT)
                 // A cut already inside the song's last seconds needs no jump: its own fade is about to start.
                 val fadeFrom = cutMs.takeIf { it < fadeStartOf(playing) }
@@ -309,7 +386,7 @@ class PartyEngine(
                 record(PartyEventKind.FULL)
                 beginHandoff(playing, s.onTrackEnded(), fadeFromMs = null, target = fadeStartOf(playing), position, now)
             }
-            plan?.exit is Exit.CutAt && position >= (plan.exit as Exit.CutAt).positionMs - settings.cutLeadMs -> {
+            cut != null && position >= cut.positionMs - settings.cutLeadMs -> {
                 record(if (plan.entry is Entry.AtDrop) PartyEventKind.DROP_ENTRY else PartyEventKind.CUT)
                 execute(s.onCutPointReached())
             }
@@ -327,8 +404,9 @@ class PartyEngine(
             finish()
             return
         }
-        // Whatever Spotify was fading into, this command decides now.
+        // Whatever Spotify was fading into, and any swap you were waiting for, this command decides now.
         handoff = null
+        pendingSwapAtMs = null
         switchNow(uriOf(command.trackId), command.fromMs)
         publish()
         session?.let { recorder.statsChanged(sessionId, it.stats, null) }
@@ -403,7 +481,9 @@ class PartyEngine(
             h.fadeFromMs != null && !h.fadeStarted && playing.positionAt(now) >= h.fadeFromMs - settings.cutLeadMs -> {
                 // The cut: send the song to where Spotify starts its fade, a second early so the fade begins at once.
                 h.fadeStarted = true
-                player.seekTo((fadeStartOf(playing) - FADE_MARGIN_MS).coerceAtLeast(0))
+                val fadeAt = (fadeStartOf(playing) - FADE_MARGIN_MS).coerceAtLeast(0)
+                // Already past it (a fade asked for in the last seconds): the song's own fade is starting anyway.
+                if (fadeAt > playing.positionAt(now)) player.seekTo(fadeAt)
             }
         }
     }
@@ -472,6 +552,7 @@ class PartyEngine(
             stats = s.stats,
             intent = s.intent,
             externalTrackUri = external,
+            swapAtMs = pendingSwapAtMs,
         )
     }
 
@@ -487,5 +568,11 @@ class PartyEngine(
         /** A cut lands this far before the fade start, so the fade begins the moment the jump lands. */
         const val FADE_MARGIN_MS = 1_000L
         const val HANDOFF_TIMEOUT_MS = 4_000L
+        /** A drop closer than this cannot be waited for: the swap would fire before you let go of the button. */
+        const val MIN_SWAP_WAIT_MS = 1_500L
+        /** Nobody waits a minute for a swap they asked for: beyond this it happens now. */
+        const val MAX_SWAP_WAIT_MS = 45_000L
+        /** "Once more" replays the drop just heard, not one that only just started. */
+        const val PULL_UP_MIN_MS = 2_000L
     }
 }

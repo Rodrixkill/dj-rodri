@@ -106,6 +106,15 @@ class DjSession(
         return advance(recorded = null)
     }
 
+    /**
+     * Your move, not the DJ's (a drop swap, a fade): the next song comes in at [entryMs]. Not a skip, because you
+     * did not reject the song, and it does not spend the DJ's cut budget.
+     */
+    fun moveOn(entryMs: Long): PlayCommand? = advance(recorded = null, entryMs = entryMs)
+
+    /** The next song's drop, even a guessed one: when you ask for the swap, a guess beats no swap. */
+    fun nextDropMs(): Long = upNext?.let { CueEstimator.estimate(it).drop?.positionMs } ?: 0
+
     /** "No va": skip, and this song does not come back tonight, not even from another playlist. */
     fun dislike(): PlayCommand? {
         val song = current ?: return null
@@ -166,7 +175,7 @@ class DjSession(
         upcoming = SetBuilder.order(upcoming, after = current, energyBias = energyBias, intent = intent, random = random).toMutableList()
     }
 
-    private fun advance(recorded: Transition?): PlayCommand? {
+    private fun advance(recorded: Transition?, entryMs: Long? = null): PlayCommand? {
         val finished = current ?: return null
         recorded?.let { djTransitions += it }
         played.addLast(finished)
@@ -178,7 +187,7 @@ class DjSession(
             return null
         }
         replan()
-        val fromMs = (recorded?.entry as? Entry.AtDrop)?.positionMs ?: 0
+        val fromMs = entryMs ?: (recorded?.entry as? Entry.AtDrop)?.positionMs ?: 0
         return PlayCommand(next.id, fromMs)
     }
 

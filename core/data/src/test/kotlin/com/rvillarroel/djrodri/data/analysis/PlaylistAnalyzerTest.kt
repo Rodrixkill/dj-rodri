@@ -56,7 +56,7 @@ class PlaylistAnalyzerTest {
 
     @Test
     fun `a playlist is analyzed song by song and the result says what the DJ can work with`() = runTest {
-        val tracks = listOf(track("a"), track("b"), track("short", durationMs = 150_000))
+        val tracks = listOf(track("a"), track("b"), track("short", durationMs = 130_000))
 
         val progress = analyzer().analyze(tracks).toList()
 

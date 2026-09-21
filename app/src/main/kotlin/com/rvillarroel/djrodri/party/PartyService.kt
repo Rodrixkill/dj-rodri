@@ -107,12 +107,16 @@ class PartyService : LifecycleService() {
             if (state.externalTrackUri != null) return "Suena algo elegido en Spotify · toca ⏭ para devolverle el control al DJ"
             val plan = state.plan ?: return "Preparando…"
             val next = state.next?.name
+            fun time(ms: Long) = "%d:%02d".format(ms / 60_000, ms / 1000 % 60)
+            state.swapAtMs?.let { return "💥 Tu drop swap en ${time(it)}" + (next?.let { " → drop de $it" } ?: "") }
             return when (val exit = plan.exit) {
                 Exit.Full -> if (next != null) "Completa · después: $next" else "Completa · última canción"
-                is Exit.CutAt -> {
-                    val at = "%d:%02d".format(exit.positionMs / 60_000, exit.positionMs / 1000 % 60)
-                    val entry = if (plan.entry is Entry.AtDrop) " directo al drop" else ""
-                    "Cambio en $at$entry" + (next?.let { " → $it" } ?: "")
+                is Exit.CutAt -> when {
+                    exit.swap -> "💥 Drop swap en ${time(exit.positionMs)}" + (next?.let { " → drop de $it" } ?: "")
+                    else -> {
+                        val entry = if (plan.entry is Entry.AtDrop) " directo al drop" else ""
+                        "Cambio en ${time(exit.positionMs)}$entry" + (next?.let { " → $it" } ?: "")
+                    }
                 }
             }
         }

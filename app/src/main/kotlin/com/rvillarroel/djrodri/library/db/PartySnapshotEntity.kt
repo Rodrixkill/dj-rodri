@@ -104,11 +104,11 @@ class RoomPartySnapshotStore(private val dao: PartySnapshotDao) : PartySnapshotS
     override suspend fun clear() = dao.clear()
 }
 
-// "F|S" is a whole song into a start; "C120000|D40000" is a cut at 2:00 into a drop at 0:40.
+// "F|S" is a whole song into a start; "C120000|D40000" a cut at 2:00 into a drop at 0:40; "X…" a drop swap.
 private fun encodeTransition(transition: Transition): String {
     val exit = when (val e = transition.exit) {
         Exit.Full -> "F"
-        is Exit.CutAt -> "C${e.positionMs}"
+        is Exit.CutAt -> (if (e.swap) "X" else "C") + e.positionMs
     }
     val entry = when (val e = transition.entry) {
         Entry.FromStart -> "S"
@@ -121,7 +121,8 @@ private fun decodeTransition(text: String): Transition? {
     val (exitText, entryText) = text.split("|").takeIf { it.size == 2 } ?: return null
     val exit = when {
         exitText == "F" -> Exit.Full
-        exitText.startsWith("C") -> exitText.drop(1).toLongOrNull()?.let(Exit::CutAt) ?: return null
+        exitText.startsWith("C") -> exitText.drop(1).toLongOrNull()?.let { Exit.CutAt(it) } ?: return null
+        exitText.startsWith("X") -> exitText.drop(1).toLongOrNull()?.let { Exit.CutAt(it, swap = true) } ?: return null
         else -> return null
     }
     val entry = when {

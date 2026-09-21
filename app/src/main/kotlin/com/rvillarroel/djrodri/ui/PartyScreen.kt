@@ -159,6 +159,17 @@ fun PartyScreen(onBack: () -> Unit, onSwitchPlaylist: () -> Unit, vm: PartyViewM
             BigButton(if (state.isPaused) "▶" else "⏸", engine::togglePause, Modifier.weight(1f), color = DjColors.StageRaised)
             BigButton("⏭", engine::next, Modifier.weight(1f), color = DjColors.StageRaised)
         }
+        // Your own DJ moves, on top of what the DJ does by itself.
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            BigButton(
+                state.swapAtMs?.let { "💥 en ${formatTime(it)}" } ?: "💥 Drop swap",
+                engine::dropSwap,
+                Modifier.weight(1f),
+                color = DjColors.Drop,
+            )
+            BigButton("🌊 Fundido ya", engine::fadeNow, Modifier.weight(1f), color = DjColors.Neon)
+            BigButton("🔁 Otra vez", engine::pullUp, Modifier.weight(1f), color = DjColors.StageRaised)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             BigButton("Completa", engine::keepFull, Modifier.weight(1f), color = DjColors.Whole)
             BigButton("No va 👎", engine::dislike, Modifier.weight(1f), color = DjColors.Warning)

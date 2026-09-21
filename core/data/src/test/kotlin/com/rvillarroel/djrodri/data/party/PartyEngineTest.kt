@@ -172,21 +172,108 @@ class PartyEngineTest {
     }
 
     @Test
-    fun `in hora loca the second song is cut after its second chorus and the third enters on its drop`() = runTest {
+    fun `in hora loca the second song is swapped on its second drop for the drop of the third`() = runTest {
         val h = harness()
         h.engine.start("pl", h.playlist, PartySettings(DjMode.HORA_LOCA))
 
         advanceTimeBy(durationMs) // first song: warm-up, plays whole
         runCurrent()
         val second = h.engine.state.value
-        assertEquals(Exit.CutAt(120_000), second.plan!!.exit)
+        assertEquals(Exit.CutAt(100_000, swap = true), second.plan!!.exit)
         assertEquals(Entry.AtDrop(40_000), second.plan!!.entry)
 
-        advanceTimeBy(120_000)
+        advanceTimeBy(100_000)
         runCurrent()
 
         assertEquals(listOf("play ${h.currentUri}", "seek 40000"), h.player.calls.takeLast(2))
-        assertEquals(PartyEventKind.DROP_ENTRY, h.recorder.events.last().second)
+        assertEquals(PartyEventKind.DROP_SWAP, h.recorder.events.last().second)
+    }
+
+    @Test
+    fun `the DJ's drop swap is a dry cut even with Spotify's crossfade on, because the hit is the point`() = runTest {
+        val h = harness()
+        h.player.crossfade = fade
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.HORA_LOCA))
+        advanceTimeBy(durationMs - fade + 500)
+        runCurrent()
+        val callsBefore = h.player.calls.size
+
+        advanceTimeBy(100_000)
+        runCurrent()
+
+        assertEquals(listOf("play ${h.currentUri}", "seek 40000"), h.player.calls.drop(callsBefore))
+    }
+
+    // ---- Your own moves -----------------------------------------------------------------------------------------
+
+    @Test
+    fun `your drop swap waits for the next drop of the song and lands the next song on its drop`() = runTest {
+        val h = harness()
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
+        advanceTimeBy(10_000)
+        runCurrent()
+
+        h.engine.dropSwap()
+        runCurrent()
+        assertEquals(40_000L, h.engine.state.value.swapAtMs) // the first chorus starts at 0:40
+        val first = h.currentUri
+
+        advanceTimeBy(30_000)
+        runCurrent()
+
+        assertTrue(h.currentUri != first)
+        assertEquals(listOf("play ${h.currentUri}", "seek 40000"), h.player.calls.takeLast(2))
+        assertEquals(PartyEventKind.DROP_SWAP, h.recorder.events.last().second)
+        // A move of yours, not a rejection of the song: it is not counted as a skip.
+        assertEquals(0, h.engine.state.value.stats.manualSkips)
+        assertEquals(null, h.engine.state.value.swapAtMs)
+    }
+
+    @Test
+    fun `with no drop ahead in the song, your drop swap happens now`() = runTest {
+        val h = harness()
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
+        advanceTimeBy(190_000) // past the last chorus
+        runCurrent()
+
+        h.engine.dropSwap()
+        runCurrent()
+
+        assertEquals(listOf("play ${h.currentUri}", "seek 40000"), h.player.calls.takeLast(2))
+    }
+
+    @Test
+    fun `fade now hands the change to Spotify's crossfade from wherever the song is`() = runTest {
+        val h = harness()
+        h.player.crossfade = fade
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
+        advanceTimeBy(30_000)
+        runCurrent()
+        val callsBefore = h.player.calls.size
+
+        h.engine.fadeNow()
+        advanceTimeBy(3_000)
+        runCurrent()
+
+        val second = h.currentUri
+        assertEquals(listOf("queue $second", "seek ${durationMs - fade - 1_000}", "fade $second"), h.player.calls.drop(callsBefore))
+        assertEquals(PartyEventKind.FADE_NOW, h.recorder.events.last().second)
+    }
+
+    @Test
+    fun `once more sends the song back to the drop the crowd just heard`() = runTest {
+        val h = harness()
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
+        advanceTimeBy(70_000) // the first chorus (drop) ran from 0:40 to 1:00
+        runCurrent()
+        val song = h.currentUri
+
+        h.engine.pullUp()
+        runCurrent()
+
+        assertEquals("seek 40000", h.player.calls.last())
+        assertEquals(song, h.currentUri)
+        assertEquals(PartyEventKind.PULL_UP, h.recorder.events.last().second)
     }
 
     @Test
@@ -346,21 +433,27 @@ class PartyEngineTest {
 
     @Test
     fun `a cut sends the song to its fade, and the next one lands on its drop mid-fade`() = runTest {
-        val h = harness()
+        // Songs whose second chorus comes too early to swap on: the plan is a plain cut after it, into a drop.
+        val early = ChorusAnalysis(
+            listOf(TimeRange(20_000, 35_000), TimeRange(45_000, 60_000), TimeRange(100_000, 120_000), TimeRange(160_000, 180_000)),
+            4,
+            0.9,
+        )
+        val h = Harness(this, 6) { id -> partyTrack(id).let { it.copy(profile = it.profile.copy(chorus = early)) } }
         h.player.crossfade = fade
         h.engine.start("pl", h.playlist, PartySettings(DjMode.HORA_LOCA))
         advanceTimeBy(durationMs - fade + 500) // first song: warm-up, fades out whole
         runCurrent()
-        assertEquals(Exit.CutAt(120_000), h.engine.state.value.plan!!.exit)
-        assertEquals(Entry.AtDrop(40_000), h.engine.state.value.plan!!.entry)
+        assertEquals(Exit.CutAt(60_000), h.engine.state.value.plan!!.exit)
+        assertEquals(Entry.AtDrop(20_000), h.engine.state.value.plan!!.entry)
         val callsBefore = h.player.calls.size
 
-        advanceTimeBy(125_000)
+        advanceTimeBy(65_000)
         runCurrent()
 
         val third = h.currentUri
         val fadeStart = durationMs - fade - 1_000
-        assertEquals(listOf("queue $third", "seek $fadeStart", "fade $third", "seek 40000"), h.player.calls.drop(callsBefore))
+        assertEquals(listOf("queue $third", "seek $fadeStart", "fade $third", "seek 20000"), h.player.calls.drop(callsBefore))
         assertEquals(PartyEventKind.DROP_ENTRY, h.recorder.events.last().second)
         assertEquals(1, h.engine.state.value.stats.dropEntries)
     }

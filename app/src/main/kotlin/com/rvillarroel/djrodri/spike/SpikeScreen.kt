@@ -59,6 +59,7 @@ private fun SpikeScreen(vm: SpikeViewModel, onConnectRemote: () -> Unit, onRepor
 
     var cutSeconds by remember { mutableStateOf("10") }
     var dropSeconds by remember { mutableStateOf("60") }
+    var tailSeconds by remember { mutableStateOf("13") }
     var now by remember { mutableLongStateOf(android.os.SystemClock.elapsedRealtime()) }
     LaunchedEffect(Unit) { while (true) { now = android.os.SystemClock.elapsedRealtime(); delay(200) } }
 
@@ -115,8 +116,9 @@ private fun SpikeScreen(vm: SpikeViewModel, onConnectRemote: () -> Unit, onRepor
                 Rating("Entrada en drop", vm)
                 OutlinedButton(onClick = { vm.probeEndSeek() }) { Text("Saltar al final (¿crossfade?)") }
                 Rating("Final + crossfade", vm)
-                Button(onClick = { vm.probeFadeIntoDrop(dropSeconds.toIntOrNull() ?: 60) }) { Text("Fundido a la cola + drop") }
-                OutlinedButton(onClick = { vm.probeFadeIntoDrop(0) }) { Text("Fundido a la cola, desde el inicio") }
+                NumberField(tailSeconds, "a X s del final", { tailSeconds = it })
+                Button(onClick = { vm.probeFadeIntoDrop(dropSeconds.toIntOrNull() ?: 60, tailSeconds.toIntOrNull() ?: 13) }) { Text("Fundido a la cola + drop") }
+                OutlinedButton(onClick = { vm.probeFadeIntoDrop(0, tailSeconds.toIntOrNull() ?: 13) }) { Text("Fundido a la cola, desde el inicio") }
                 Rating("Fundido + drop", vm)
                 OutlinedButton(onClick = { vm.probeWebApiSkip() }) { Text("Siguiente vía Web API (respaldo)") }
             }
