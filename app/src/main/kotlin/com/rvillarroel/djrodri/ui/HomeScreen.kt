@@ -67,11 +67,21 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     /** Covers of each playlist without a picture of its own, for its mosaic. */
     val covers = MutableStateFlow<Map<String, List<String>>>(emptyMap())
 
+    /** Cover of the song an interrupted party stopped on. */
+    val resumableCover = MutableStateFlow<String?>(null)
+
     fun load() = viewModelScope.launch {
         resumable.value = container.restorableParty()
+        resumableCover.value = resumable.value?.let { container.library.trackByUri("spotify:track:${it.currentTrackId}")?.imageUrl }
         container.refreshProfile()
         if (container.library.allTracks().isEmpty()) runCatching { container.library.refreshPlaylists() }
         mixes.value = runCatching { container.styleMixes() }.getOrDefault(emptyList())
+        // Songs saved before covers existed get theirs now; the mixes are rebuilt to show them.
+        if (container.library.backfillCovers()) {
+            mixes.value = runCatching { container.styleMixes() }.getOrDefault(mixes.value.orEmpty())
+            playlists.value?.let { list -> loadCovers(list.filter { it.imageUrl == null }.map { it.id }) }
+            resumableCover.value = resumable.value?.let { container.library.trackByUri("spotify:track:${it.currentTrackId}")?.imageUrl }
+        }
     }
 
     fun loadCovers(ids: List<String>) = viewModelScope.launch {
@@ -130,6 +140,7 @@ fun HomeScreen(
     val busy by vm.busy.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val covers by vm.covers.collectAsStateWithLifecycle()
+    val resumableCover by vm.resumableCover.collectAsStateWithLifecycle()
     val activity = LocalActivity.current
     var filter by remember { mutableStateOf(HomeFilter.FOR_YOU) }
     var sheet by remember { mutableStateOf<TrackRow?>(null) }
@@ -168,7 +179,7 @@ fun HomeScreen(
                             eyebrow = "FIESTA INTERRUMPIDA",
                             title = "Sigue donde quedó",
                             subtitle = "Hace ${minutesAgo(resumable!!.savedAtMs)} min · ${resumable!!.upcomingIds.size} canciones por delante",
-                            cover = null,
+                            cover = resumableCover,
                             action = if (busy) "Retomando…" else "Retomar",
                             onAction = { activity?.let { vm.resume(it, onParty) } },
                             secondary = "Descartar" to { vm.forget() },

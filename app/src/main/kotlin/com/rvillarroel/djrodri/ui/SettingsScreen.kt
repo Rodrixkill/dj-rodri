@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Slider
@@ -131,7 +132,7 @@ fun SettingsScreen(onBack: () -> Unit, onLab: () -> Unit, vm: SettingsViewModel 
         SettingsGroup("Cómo mezcla el DJ") {
             DjMode.entries.forEach { mode ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    DjChip(mode.label(), settings.mode == mode, { vm.update(settings.copy(mode = mode)) })
+                    DjChip(mode.label(), settings.mode == mode, { vm.update(settings.copy(mode = mode)) }, Modifier.width(112.dp))
                     Text(mode.description(), style = DjType.meta, color = Dj.colors.textSecondary, modifier = Modifier.padding(start = Space.sm))
                 }
             }

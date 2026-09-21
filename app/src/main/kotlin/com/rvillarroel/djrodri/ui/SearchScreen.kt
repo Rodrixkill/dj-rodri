@@ -56,7 +56,8 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
     private var searchJob: Job? = null
 
     fun load() = viewModelScope.launch {
-        if (mixes.value == null) mixes.value = runCatching { container.styleMixes() }.getOrDefault(emptyList())
+        // Recomputed on every visit: covers and analyses keep arriving in the background.
+        mixes.value = runCatching { container.styleMixes() }.getOrDefault(mixes.value.orEmpty())
     }
 
     fun type(text: String) {

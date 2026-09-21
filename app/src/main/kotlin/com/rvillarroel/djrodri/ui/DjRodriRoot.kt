@@ -31,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,6 +88,7 @@ fun DjRodriRoot(container: AppContainer, loginError: String?, onLogin: () -> Uni
     val theme by container.settings.theme.collectAsStateWithLifecycle()
 
     var tab by remember { mutableStateOf(if (party.active) Tab.PARTY else Tab.HOME) }
+    val saveable = rememberSaveableStateHolder()
     val stacks = remember { mutableStateMapOf<Tab, List<Screen>>().apply { Tab.entries.forEach { put(it, listOf(it.root())) } } }
     val stack = stacks.getValue(tab)
     val top = stack.last()
@@ -117,19 +119,22 @@ fun DjRodriRoot(container: AppContainer, loginError: String?, onLogin: () -> Uni
                     transitionSpec = { fadeIn(tween(Motion.BASE)) togetherWith fadeOut(tween(Motion.FAST)) },
                     label = "screen",
                 ) { screen ->
-                    ScreenContent(
-                        screen = screen,
-                        onOpenPlaylist = { push(Screen.Playlist(it)) },
-                        onBack = ::pop,
-                        onSettings = { push(Screen.Settings) },
-                        onLab = { push(Screen.Lab) },
-                        onSearch = { select(Tab.SEARCH) },
-                        onLibrary = { select(Tab.LIBRARY) },
-                        onParty = {
-                            stacks[Tab.PARTY] = listOf(Screen.Party)
-                            tab = Tab.PARTY
-                        },
-                    )
+                    // Each screen keeps its scroll position and state when you go deeper and come back.
+                    saveable.SaveableStateProvider(screen.toString()) {
+                        ScreenContent(
+                            screen = screen,
+                            onOpenPlaylist = { push(Screen.Playlist(it)) },
+                            onBack = ::pop,
+                            onSettings = { push(Screen.Settings) },
+                            onLab = { push(Screen.Lab) },
+                            onSearch = { select(Tab.SEARCH) },
+                            onLibrary = { select(Tab.LIBRARY) },
+                            onParty = {
+                                stacks[Tab.PARTY] = listOf(Screen.Party)
+                                tab = Tab.PARTY
+                            },
+                        )
+                    }
                 }
             }
             val miniPlayer = party.active && tab != Tab.PARTY

@@ -59,4 +59,17 @@ class LibraryRepository(private val api: SpotifyWebApi, private val dao: Library
     val recentlyPlayed: Flow<List<SourceTrack>> = dao.recentlyPlayed().map { list -> list.map { it.toSource() } }
 
     suspend fun coversOf(playlistId: String): List<String> = dao.coversOf(playlistId)
+
+    /**
+     * Playlists read before covers were kept (database v4) are read once more, quietly, so every song gets its
+     * cover. Returns whether anything changed. Offline, it simply tries again next time.
+     */
+    suspend fun backfillCovers(): Boolean {
+        var changed = false
+        for (playlist in dao.syncedPlaylists()) {
+            if (dao.coversOf(playlist).isNotEmpty()) continue
+            if (runCatching { fetch(playlist) }.isSuccess) changed = true
+        }
+        return changed
+    }
 }

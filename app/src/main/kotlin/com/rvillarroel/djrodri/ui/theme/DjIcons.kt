@@ -27,6 +27,7 @@ object DjIcons {
     val Close = line("Close", "M6 6l12 12", "M18 6 6 18")
     val Plus = line("Plus", "M12 5v14", "M5 12h14")
     val Mic = line("Mic", "M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z", "M5.5 11a6.5 6.5 0 0 0 13 0", "M12 17.5V21")
+    val Heart = line("Heart", "M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6C19.5 15.4 12 20 12 20z")
     val Clock = line("Clock", "M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17z", "M12 7.5V12l3 2")
     val Refresh = line("Refresh", "M19.5 12a7.5 7.5 0 1 1-2.2-5.3", "M19.5 4v4h-4")
     val Music = line("Music", "M9 17.5V5.8L19 4v11", "M6.5 15a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5z", "M16.5 12.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5z")

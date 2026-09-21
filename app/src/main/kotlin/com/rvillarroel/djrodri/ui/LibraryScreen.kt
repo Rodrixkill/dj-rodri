@@ -94,7 +94,7 @@ fun LibraryScreen(onOpenPlaylist: (String) -> Unit, onSettings: () -> Unit, vm: 
 
         item {
             Column(Modifier.padding(top = Space.xs)) {
-                LibraryLink(DjIcons.Party, "Tus me gusta", "Tus canciones guardadas en Spotify") { onOpenPlaylist(LIKED_SONGS_ID) }
+                LibraryLink(DjIcons.Heart, "Tus me gusta", "Tus canciones guardadas en Spotify") { onOpenPlaylist(LIKED_SONGS_ID) }
                 LibraryLink(DjIcons.Clock, "Escuchado en tus fiestas", if (recent.isEmpty()) "Todavía nada" else "${recent.size} canciones recientes", onClick = null)
                 LibraryLink(DjIcons.Flag, "Drops marcados", if (dropMarks == 0) "Márcalos en la fiesta o desde una canción" else "$dropMarks canciones con tu drop", onClick = null)
             }
