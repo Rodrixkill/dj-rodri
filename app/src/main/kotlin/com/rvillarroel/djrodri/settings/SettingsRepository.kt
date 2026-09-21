@@ -3,6 +3,9 @@ package com.rvillarroel.djrodri.settings
 import android.content.Context
 import com.rvillarroel.djrodri.data.party.PartySettings
 import com.rvillarroel.djrodri.domain.dj.DjMode
+import com.rvillarroel.djrodri.domain.dj.StyleFamily
+import org.json.JSONArray
+import org.json.JSONObject
 import com.rvillarroel.djrodri.spotify.Profile
 import com.rvillarroel.djrodri.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,6 +48,28 @@ class SettingsRepository(context: Context) {
     fun rememberProfile(profile: Profile) {
         prefs.edit().putString(KEY_NAME, profile.name).putString(KEY_AVATAR, profile.imageUrl).apply()
         _profile.value = profile
+    }
+
+    /**
+     * Your songs grouped by style, as the last analysis left them: {"REGGAETON": ["id", …]}. Null until the first
+     * grouping. Kept here so Home and Search read it instead of recomputing it.
+     */
+    val styleIndex: Map<StyleFamily, List<String>>?
+        get() = prefs.getString(KEY_STYLE_INDEX, null)?.let { text ->
+            runCatching {
+                val json = JSONObject(text)
+                json.keys().asSequence().mapNotNull { key ->
+                    val family = runCatching { StyleFamily.valueOf(key) }.getOrNull() ?: return@mapNotNull null
+                    val ids = json.getJSONArray(key)
+                    family to List(ids.length()) { ids.getString(it) }
+                }.toMap()
+            }.getOrNull()
+        }
+
+    fun saveStyleIndex(index: Map<StyleFamily, List<String>>) {
+        val json = JSONObject()
+        index.forEach { (family, ids) -> json.put(family.name, JSONArray(ids)) }
+        prefs.edit().putString(KEY_STYLE_INDEX, json.toString()).apply()
     }
 
     /** What you searched for, newest first. */
@@ -98,5 +123,6 @@ class SettingsRepository(context: Context) {
         const val KEY_AVATAR = "profile_avatar"
         const val KEY_SEARCHES = "recent_searches"
         const val MAX_SEARCHES = 8
+        const val KEY_STYLE_INDEX = "style_index"
     }
 }

@@ -10,6 +10,10 @@ import com.rvillarroel.djrodri.domain.dj.CueEstimator
 import com.rvillarroel.djrodri.domain.dj.DjMode
 import com.rvillarroel.djrodri.domain.dj.TrackProfile
 import com.rvillarroel.djrodri.domain.dj.TransitionPlanner
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -68,6 +72,8 @@ class PlaylistAnalyzer(
     private val clock: () -> Long = System::currentTimeMillis,
     /** Pause between songs: MusicBrainz asks for at most one request per second, and LRCLIB is free too. */
     private val politenessDelayMs: Long = 1_100,
+    /** Where the CPU work of building profiles runs; tests pass their own. */
+    private val computation: CoroutineDispatcher = Dispatchers.Default,
 ) {
     fun analyze(tracks: List<SourceTrack>, force: Boolean = false): Flow<AnalysisProgress> = flow {
         val unique = tracks.distinctBy { it.id }
@@ -92,20 +98,38 @@ class PlaylistAnalyzer(
 
     suspend fun coverage(tracks: List<SourceTrack>): Coverage {
         val analyses = store.analyses(tracks.map { it.id })
-        return Coverage.of(profiles(tracks, analyses), analyses.values)
+        val profiles = profiles(tracks, analyses)
+        return withContext(computation) { Coverage.of(profiles, analyses.values) }
     }
 
     /** Profiles for the DJ engine. Songs never analyzed still get a bare profile: they play, just always whole. */
     suspend fun profiles(tracks: List<SourceTrack>): List<TrackProfile> =
         profiles(tracks, store.analyses(tracks.map { it.id }))
 
+    /**
+     * Building a profile means parsing the lyrics and finding the chorus: tens of milliseconds a song, seconds for a
+     * whole library. So it runs off the main thread, and each profile is remembered until its analysis or your drop
+     * mark changes. The phone showed the cost: recomputing it on every screen froze the app for up to 28 s.
+     */
     private suspend fun profiles(tracks: List<SourceTrack>, analyses: Map<String, TrackAnalysis>): List<TrackProfile> {
         val marks = store.dropMarks(tracks.map { it.id })
-        return tracks.distinctBy { it.id }.map { track ->
-            analyses[track.id]?.toProfile(track, marks[track.id])
-                ?: TrackProfile(id = track.id, artist = track.artist, durationMs = track.durationMs, userDropMs = marks[track.id])
+        return withContext(computation) {
+            tracks.distinctBy { it.id }.map { track ->
+                val analysis = analyses[track.id]
+                val mark = marks[track.id]
+                val key = ProfileKey(track.id, analysis?.analyzedAtMs, analysis?.analyzerVersion, mark, track.durationMs)
+                profileCache[key] ?: (
+                    analysis?.toProfile(track, mark)
+                        ?: TrackProfile(id = track.id, artist = track.artist, durationMs = track.durationMs, userDropMs = mark)
+                    ).also { profileCache[key] = it }
+            }
         }
     }
+
+    /** One entry per song version: a new analysis or a new drop mark makes a new key, so nothing goes stale. */
+    private data class ProfileKey(val trackId: String, val analyzedAtMs: Long?, val version: Int?, val dropMs: Long?, val durationMs: Long)
+
+    private val profileCache = ConcurrentHashMap<ProfileKey, TrackProfile>()
 
     private suspend fun fetchFeatures(pending: List<SourceTrack>): Map<String, AudioFeatures>? =
         if (pending.isEmpty()) emptyMap()

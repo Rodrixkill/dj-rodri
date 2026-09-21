@@ -88,6 +88,9 @@ interface LibraryDao {
     )
     fun recentlyPlayed(limit: Int = 20): Flow<List<TrackEntity>>
 
+    @Query("SELECT * FROM track WHERE id IN (:ids)")
+    suspend fun tracksByIds(ids: List<String>): List<TrackEntity>
+
     @Query("SELECT id FROM playlist WHERE tracksSyncedAtMs IS NOT NULL")
     suspend fun syncedPlaylists(): List<String>
 

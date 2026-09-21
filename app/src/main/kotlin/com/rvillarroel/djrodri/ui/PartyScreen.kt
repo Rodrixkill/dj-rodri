@@ -267,7 +267,7 @@ private fun PartyExtras(state: PartyState, vm: PartyViewModel, onLibrary: () -> 
     }
 
     SectionHeader("Pídele algo al DJ")
-    RequestPanel(vm, state.intent.label)
+    RequestPanel(vm, state.intent.label, state.playlistId)
 
     SectionHeader("Cómo mezcla")
     Row(horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
@@ -284,7 +284,9 @@ private fun PartyExtras(state: PartyState, vm: PartyViewModel, onLibrary: () -> 
 
 /** "Pon algo para perrear": the only place the local model is used, and it never sees your songs. */
 @Composable
-private fun RequestPanel(vm: PartyViewModel, currentIntentLabel: String) {
+private fun RequestPanel(vm: PartyViewModel, currentIntentLabel: String, playlistId: String?) {
+    // Counting genres over the whole playlist is not free: once per playlist, not on every tick of the player.
+    val genres = remember(playlistId) { vm.playlistGenres }
     val thinking by vm.thinking.collectAsStateWithLifecycle()
     val last by vm.lastRequest.collectAsStateWithLifecycle()
     val pending by vm.pending.collectAsStateWithLifecycle()
@@ -301,9 +303,9 @@ private fun RequestPanel(vm: PartyViewModel, currentIntentLabel: String) {
     }
 
     // The genres actually present in this playlist: one tap instead of typing.
-    if (vm.playlistGenres.isNotEmpty()) {
+    if (genres.isNotEmpty()) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.xs), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
-            vm.playlistGenres.forEach { genre -> DjChip(genre, false, { vm.request("pon $genre") }) }
+            genres.forEach { genre -> DjChip(genre, false, { vm.request("pon $genre") }) }
         }
     }
     Row(Modifier.fillMaxWidth().padding(top = Space.sm), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.xs)) {

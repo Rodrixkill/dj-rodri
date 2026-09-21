@@ -56,7 +56,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
     private var searchJob: Job? = null
 
     fun load() = viewModelScope.launch {
-        // Recomputed on every visit: covers and analyses keep arriving in the background.
+        // Only reads the style groups the last analysis saved: nothing is recomputed by opening this tab.
         mixes.value = runCatching { container.styleMixes() }.getOrDefault(mixes.value.orEmpty())
     }
 

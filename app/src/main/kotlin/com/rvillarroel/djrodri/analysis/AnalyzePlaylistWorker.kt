@@ -47,6 +47,8 @@ class AnalyzePlaylistWorker(context: Context, params: WorkerParameters) : Corout
                     runCatching { setForeground(foregroundInfo(progress.done, progress.total)) }
                 }
             }
+            // The analysis you asked for is done: this is the one moment the style groups for Home and Search are rebuilt.
+            app.rebuildStyleIndex()
             Result.success()
         }.getOrElse { error ->
             // A refusal (403, 404…) will say the same thing on every try; only network trouble and 429 are worth retrying.

@@ -27,6 +27,7 @@ import com.rvillarroel.djrodri.library.db.DjDatabase
 import com.rvillarroel.djrodri.library.db.RoomAnalysisStore
 import com.rvillarroel.djrodri.library.db.RoomPartyRecorder
 import com.rvillarroel.djrodri.library.db.RoomPartySnapshotStore
+import com.rvillarroel.djrodri.library.db.toSource
 import com.rvillarroel.djrodri.party.PartyService
 import com.rvillarroel.djrodri.settings.SettingsRepository
 import com.rvillarroel.djrodri.spotify.AppRemotePlayer
@@ -137,15 +138,28 @@ class AppContainer(private val context: Context) {
      * library, since Spotify no longer offers recommendations to apps like this one.
      */
     suspend fun styleMixes(): List<StyleMix> {
+        // Only read what an analysis left behind. The one exception: the first launch after this was added,
+        // when songs analyzed before get grouped once, so nobody has to analyze again.
+        val index = settings.styleIndex ?: rebuildStyleIndex()
+        return index.mapNotNull { (family, ids) ->
+            val tracks = ids.chunked(MAX_SQL_IDS).flatMap { database.library().tracksByIds(it) }.map { it.toSource() }
+            val byId = tracks.associateBy { it.id }
+            StyleMix(family, ids.mapNotNull { byId[it] }).takeIf { it.tracks.size >= MIN_MIX_SONGS }
+        }.sortedByDescending { it.tracks.size }
+    }
+
+    /**
+     * Groups every analyzed song by style and saves it. Runs when an analysis you asked for finishes, never on its
+     * own: grouping means reading the analysis of the whole library.
+     */
+    suspend fun rebuildStyleIndex(): Map<StyleFamily, List<String>> {
         val tracks = library.allTracks()
-        if (tracks.isEmpty()) return emptyList()
-        val byId = tracks.associateBy { it.id }
-        return analyzer.profiles(tracks)
+        val index = analyzer.profiles(tracks)
             .groupBy { StyleFamily.of(it) }
             .filterKeys { it != StyleFamily.UNKNOWN }
-            .filterValues { it.size >= MIN_MIX_SONGS }
-            .map { (family, songs) -> StyleMix(family, songs.mapNotNull { byId[it.id] }) }
-            .sortedByDescending { it.tracks.size }
+            .mapValues { (_, songs) -> songs.map { it.id } }
+        settings.saveStyleIndex(index)
+        return index
     }
 
     /** Plays a style mix: the playlist holding most of its songs, with the DJ asked for that style. */

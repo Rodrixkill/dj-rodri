@@ -70,9 +70,14 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     /** Cover of the song an interrupted party stopped on. */
     val resumableCover = MutableStateFlow<String?>(null)
 
+    /** The heavy part (profile, covers, mixes) runs once per session, not on every visit to the tab. */
+    private var loaded = false
+
     fun load() = viewModelScope.launch {
         resumable.value = container.restorableParty()
         resumableCover.value = resumable.value?.let { container.library.trackByUri("spotify:track:${it.currentTrackId}")?.imageUrl }
+        if (loaded) return@launch
+        loaded = true
         container.refreshProfile()
         if (container.library.allTracks().isEmpty()) runCatching { container.library.refreshPlaylists() }
         mixes.value = runCatching { container.styleMixes() }.getOrDefault(emptyList())
