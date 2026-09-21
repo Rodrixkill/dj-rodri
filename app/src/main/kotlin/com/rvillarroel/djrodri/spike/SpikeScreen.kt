@@ -115,6 +115,9 @@ private fun SpikeScreen(vm: SpikeViewModel, onConnectRemote: () -> Unit, onRepor
                 Rating("Entrada en drop", vm)
                 OutlinedButton(onClick = { vm.probeEndSeek() }) { Text("Saltar al final (¿crossfade?)") }
                 Rating("Final + crossfade", vm)
+                Button(onClick = { vm.probeFadeIntoDrop(dropSeconds.toIntOrNull() ?: 60) }) { Text("Fundido a la cola + drop") }
+                OutlinedButton(onClick = { vm.probeFadeIntoDrop(0) }) { Text("Fundido a la cola, desde el inicio") }
+                Rating("Fundido + drop", vm)
                 OutlinedButton(onClick = { vm.probeWebApiSkip() }) { Text("Siguiente vía Web API (respaldo)") }
             }
         }

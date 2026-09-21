@@ -25,4 +25,10 @@ interface PlayerPort {
     fun seekTo(positionMs: Long)
     fun pause()
     fun resume()
+
+    /** Puts a song right after the current one, so Spotify's own crossfade goes to it and not to its own pick. */
+    fun queue(uri: String)
+
+    /** How long Spotify's crossfade is, or null when it is off (then every change is a clean cut). */
+    suspend fun crossfadeMs(): Long?
 }

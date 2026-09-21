@@ -126,6 +126,17 @@ fun SettingsScreen(onBack: () -> Unit, onLab: () -> Unit, vm: SettingsViewModel 
         Panel {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
+                    Text("Fundido de Spotify en los cambios", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Cada cambio usa el crossfade de Spotify, también los cortes y las entradas en el drop. " +
+                            "Necesita el crossfade activado en Spotify (Ajustes → Reproducción). Apagado: cortes limpios.",
+                        color = DjColors.TextDim,
+                    )
+                }
+                Switch(checked = settings.useSpotifyFade, onCheckedChange = { vm.update(settings.copy(useSpotifyFade = it)) })
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
                     Text("Pausa corta antes del drop", style = MaterialTheme.typography.titleMedium)
                     Text("Evita que se escuche el inicio de la canción antes del salto. Actívala si la entrada directa se nota.", color = DjColors.TextDim)
                 }

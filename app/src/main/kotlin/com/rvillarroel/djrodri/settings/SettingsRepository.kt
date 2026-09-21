@@ -32,6 +32,7 @@ class SettingsRepository(context: Context) {
             .putString(KEY_MODE, settings.mode.name)
             .putBoolean(KEY_DROP_PAUSE, settings.dropWithPause)
             .putLong(KEY_CUT_LEAD, settings.cutLeadMs)
+            .putBoolean(KEY_SPOTIFY_FADE, settings.useSpotifyFade)
             .apply()
         _party.value = settings
     }
@@ -47,12 +48,14 @@ class SettingsRepository(context: Context) {
         mode = runCatching { DjMode.valueOf(prefs.getString(KEY_MODE, null)!!) }.getOrDefault(DjMode.FIESTA),
         dropWithPause = prefs.getBoolean(KEY_DROP_PAUSE, false),
         cutLeadMs = prefs.getLong(KEY_CUT_LEAD, PartySettings().cutLeadMs),
+        useSpotifyFade = prefs.getBoolean(KEY_SPOTIFY_FADE, true),
     )
 
     private companion object {
         const val KEY_MODE = "mode"
         const val KEY_DROP_PAUSE = "drop_with_pause"
         const val KEY_CUT_LEAD = "cut_lead_ms"
+        const val KEY_SPOTIFY_FADE = "use_spotify_fade"
         const val KEY_GUIDE = "hyperos_guide_done"
         const val KEY_LOCAL_AI = "use_local_ai"
         const val KEY_LAST_PLAYLIST = "last_playlist"

@@ -133,7 +133,9 @@ class AppContainer(private val context: Context) {
         val snapshot = restorableParty() ?: return "Ya no hay una fiesta que retomar"
         if (!ensureRemoteConnected(activityContext)) return "No se pudo conectar con la app de Spotify"
         val tracks = runCatching { partyTracks(snapshot.playlistId) }.getOrElse { return it.message }
-        if (!party.resume(snapshot, tracks)) return "La canción que sonaba ya no está en la playlist"
+        // The snapshot does not store the fade switch: what is in Ajustes now wins.
+        val withFade = snapshot.copy(settings = snapshot.settings.copy(useSpotifyFade = settings.party.value.useSpotifyFade))
+        if (!party.resume(withFade, tracks)) return "La canción que sonaba ya no está en la playlist"
         ContextCompat.startForegroundService(context, PartyService.startIntent(context))
         return null
     }

@@ -162,6 +162,33 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         log.add("Final: seek a $target ms (crossfade ${crossfadeMs}ms). Escucha si la transición fue suave y califica.")
     }
 
+    /**
+     * Spotify's own crossfade into a song the DJ picked, entering at its drop: queue the song, send the current one
+     * to its last seconds so the fade starts, and once the new song is reported, jump it to [dropSeconds]
+     * (0 = let it play from the start). Answers whether seeking mid-fade keeps the fade or breaks it.
+     */
+    fun probeFadeIntoDrop(dropSeconds: Int) = work("Fundido a la cola${if (dropSeconds > 0) " + drop" else ""}…") {
+        val playing = remote.nowPlaying.value ?: return@work log.add("Fundido: no hay nada sonando")
+        val next = tracks.value.filter { it.uri != playing.track.uri }.randomOrNull()
+            ?: return@work log.add("Fundido: elige una playlist abajo para tener canciones")
+        val crossfadeMs = remote.crossfade()?.takeIf { it.isEnabled }?.duration?.toLong()
+            ?: return@work log.add("Fundido: el crossfade de Spotify está apagado")
+        remote.queue(next.uri)
+        // Queueing is not instant: give Spotify a moment so the fade goes to our song, not the context's next.
+        delay(QUEUE_SETTLE_MS)
+        val start = SystemClock.elapsedRealtime()
+        remote.seekTo((playing.track.duration - crossfadeMs - FADE_MARGIN_MS).coerceAtLeast(0))
+        val arrived = withTimeoutOrNull(crossfadeMs + 5_000) { remote.nowPlaying.first { it != null && it.track.uri != playing.track.uri } }
+        val changedMs = SystemClock.elapsedRealtime() - start
+        if (arrived == null) return@work log.add("Fundido: la canción no cambió")
+        val ours = arrived.track.uri == next.uri
+        log.add("FUNDIDO: cambio a ${arrived.track.name} en ${changedMs}ms · ${if (ours) "era la de la cola ✔" else "NO era la de la cola (${next.name})"}")
+        if (dropSeconds > 0) {
+            remote.seekTo(dropSeconds * 1_000L)
+            log.add("FUNDIDO: salto al drop ${dropSeconds}s durante el fundido. Escucha si el fundido siguió o se cortó.")
+        }
+    }
+
     fun rate(what: String, verdict: String) {
         ratings += "$what: $verdict"
         log.add("CALIFICACIÓN $what → $verdict")
@@ -229,6 +256,11 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                 busy.value = null
             }
         }
+    }
+
+    private companion object {
+        const val QUEUE_SETTLE_MS = 800L
+        const val FADE_MARGIN_MS = 1_000L
     }
 
     override fun onCleared() {

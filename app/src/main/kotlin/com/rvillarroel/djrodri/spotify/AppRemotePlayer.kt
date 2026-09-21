@@ -39,4 +39,11 @@ class AppRemotePlayer(private val remote: RemoteController, scope: CoroutineScop
     override fun resume() {
         remote.resume()
     }
+
+    override fun queue(uri: String) {
+        remote.queue(uri)
+    }
+
+    override suspend fun crossfadeMs(): Long? =
+        remote.crossfade()?.takeIf { it.isEnabled }?.duration?.toLong()?.takeIf { it > 0 }
 }

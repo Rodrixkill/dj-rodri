@@ -8,7 +8,10 @@ import com.rvillarroel.djrodri.domain.dj.SessionStats
 import com.rvillarroel.djrodri.domain.dj.TrackProfile
 import com.rvillarroel.djrodri.domain.lyrics.ChorusAnalysis
 import com.rvillarroel.djrodri.domain.lyrics.TimeRange
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -20,12 +23,51 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.random.Random
 
+private const val SPOTIFY_OWN_PICK = "spotify:track:spotifyPick"
+
 class PartyEngineTest {
 
-    /** Spotify as the engine sees it: plays instantly, and the clock is the test's virtual time. */
-    private class FakePlayer(private val clock: () -> Long, private val durations: Map<String, Long>) : PlayerPort {
+    /**
+     * Spotify as the engine sees it: plays instantly, and the clock is the test's virtual time. With [crossfade] set
+     * it fades like the real app: in a song's last seconds it moves on to the queued song, or to its own pick.
+     */
+    private class FakePlayer(
+        private val clock: () -> Long,
+        private val durations: Map<String, Long>,
+        scope: CoroutineScope,
+    ) : PlayerPort {
         override val state = MutableStateFlow<PlayerState?>(null)
         val calls = mutableListOf<String>()
+        var crossfade: Long? = null
+        /** False plays Spotify's own next song even when something was queued. */
+        var honorsQueue = true
+        private var queued: String? = null
+
+        init {
+            scope.launch {
+                while (true) {
+                    delay(50)
+                    fadeIfDue()
+                }
+            }
+        }
+
+        private fun fadeIfDue() {
+            val fade = crossfade ?: return
+            val s = state.value?.takeIf { !it.isPaused } ?: return
+            if (s.positionAt(clock()) < s.durationMs - fade) return
+            val next = queued?.takeIf { honorsQueue } ?: SPOTIFY_OWN_PICK
+            queued = null
+            calls += "fade $next"
+            state.value = PlayerState(next, durations[next] ?: 200_000, 0, isPaused = false, capturedAtMs = clock())
+        }
+
+        override fun queue(uri: String) {
+            calls += "queue $uri"
+            queued = uri
+        }
+
+        override suspend fun crossfadeMs() = crossfade
 
         override fun play(uri: String) {
             calls += "play $uri"
@@ -93,7 +135,7 @@ class PartyEngineTest {
 
     private class Harness(scope: TestScope, size: Int, factory: (String) -> PartyTrack) {
         val playlist = (1..size).map { factory("t$it") }
-        val player = FakePlayer({ scope.testScheduler.currentTime }, playlist.associate { it.source.uri to it.source.durationMs })
+        val player = FakePlayer({ scope.testScheduler.currentTime }, playlist.associate { it.source.uri to it.source.durationMs }, scope.backgroundScope)
         val recorder = MemoryRecorder()
         val snapshots = MemorySnapshots()
         val engine = PartyEngine(player, recorder, snapshots, scope.backgroundScope, { scope.testScheduler.currentTime }, Random(1))
@@ -278,6 +320,92 @@ class PartyEngineTest {
 
         assertTrue(h.snapshots.cleared)
         assertEquals(null, h.snapshots.saved)
+    }
+
+    // ---- Spotify's own crossfade ------------------------------------------------------------------------------
+
+    private val fade = 12_000L
+
+    @Test
+    fun `with crossfade on, a whole song fades into the song the DJ queued, without the DJ touching play`() = runTest {
+        val h = harness()
+        h.player.crossfade = fade
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
+        val first = h.currentUri
+
+        advanceTimeBy(durationMs - fade + 500)
+        runCurrent()
+
+        val second = h.currentUri
+        assertTrue(second != first)
+        assertEquals(listOf("play $first", "queue $second", "fade $second"), h.player.calls)
+        assertEquals(PartyEventKind.FULL, h.recorder.events.last().second)
+        // Spotify changing song here is the DJ's own doing, not someone in the Spotify app.
+        assertEquals(null, h.engine.state.value.externalTrackUri)
+    }
+
+    @Test
+    fun `a cut sends the song to its fade, and the next one lands on its drop mid-fade`() = runTest {
+        val h = harness()
+        h.player.crossfade = fade
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.HORA_LOCA))
+        advanceTimeBy(durationMs - fade + 500) // first song: warm-up, fades out whole
+        runCurrent()
+        assertEquals(Exit.CutAt(120_000), h.engine.state.value.plan!!.exit)
+        assertEquals(Entry.AtDrop(40_000), h.engine.state.value.plan!!.entry)
+        val callsBefore = h.player.calls.size
+
+        advanceTimeBy(125_000)
+        runCurrent()
+
+        val third = h.currentUri
+        val fadeStart = durationMs - fade - 1_000
+        assertEquals(listOf("queue $third", "seek $fadeStart", "fade $third", "seek 40000"), h.player.calls.drop(callsBefore))
+        assertEquals(PartyEventKind.DROP_ENTRY, h.recorder.events.last().second)
+        assertEquals(1, h.engine.state.value.stats.dropEntries)
+    }
+
+    @Test
+    fun `if Spotify fades into its own pick instead of ours, the DJ switches to its song the clean way`() = runTest {
+        val h = harness()
+        h.player.crossfade = fade
+        h.player.honorsQueue = false
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
+
+        advanceTimeBy(durationMs - fade + 500)
+        runCurrent()
+
+        val second = h.currentUri
+        assertEquals(listOf("fade $SPOTIFY_OWN_PICK", "play $second"), h.player.calls.takeLast(2))
+        assertEquals(null, h.engine.state.value.externalTrackUri)
+    }
+
+    @Test
+    fun `with the fade switched off in Ajustes, changes stay clean cuts even if Spotify has crossfade on`() = runTest {
+        val h = harness()
+        h.player.crossfade = fade
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA, useSpotifyFade = false))
+
+        advanceTimeBy(durationMs - fade + 500)
+        runCurrent()
+
+        assertTrue(h.player.calls.none { it.startsWith("queue") })
+    }
+
+    @Test
+    fun `pressing next while a fade is being prepared wins over the fade`() = runTest {
+        val h = harness()
+        h.player.crossfade = fade
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
+        advanceTimeBy(durationMs - fade - 1_000) // the next song is already queued, the fade has not started
+        runCurrent()
+        assertTrue(h.player.calls.last().startsWith("queue"))
+
+        h.engine.next()
+        runCurrent()
+
+        assertEquals("play ${h.currentUri}", h.player.calls.last())
+        assertEquals(1, h.engine.state.value.stats.manualSkips)
     }
 
     @Test

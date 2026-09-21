@@ -34,6 +34,11 @@ data class PartySettings(
     val cutLeadMs: Long = 150,
     /** A song playing whole is handed over this close to its end. */
     val endLeadMs: Long = 400,
+    /**
+     * Let Spotify's own crossfade do every change: the next song is queued, and a cut sends the current song to its
+     * last seconds so the fade starts there. Only when crossfade is on in Spotify; otherwise changes are clean cuts.
+     */
+    val useSpotifyFade: Boolean = true,
 )
 
 enum class PartyEventKind { FULL, CUT, DROP_ENTRY, SKIP, PREVIOUS, DISLIKE, KEEP_FULL, EXTERNAL_CHANGE }
@@ -116,6 +121,26 @@ class PartyEngine(
     private var lastSnapshotAtMs = 0L
     private var ticker: Job? = null
 
+    /** Spotify's crossfade length while fades are in use; 0 means clean cuts. */
+    private var fadeMs = 0L
+
+    /**
+     * A change Spotify is making for us: [uri] is queued and the fade goes to it. [fadeFromMs] is where a cut sends
+     * the current song to its last seconds; null means the song simply runs into its own fade.
+     */
+    private class Handoff(
+        val fromUri: String,
+        val uri: String,
+        val entryMs: Long,
+        val fadeFromMs: Long?,
+        var deadlineMs: Long,
+        var lastSeenMs: Long,
+    ) {
+        var fadeStarted = false
+    }
+
+    private var handoff: Handoff? = null
+
     suspend fun start(playlistId: String, playlist: List<PartyTrack>, settings: PartySettings) = lock.withLock {
         stopTicker()
         this.settings = settings
@@ -124,6 +149,7 @@ class PartyEngine(
         session = newSession
         sessionId = recorder.sessionStarted(playlistId, settings.mode, clock())
         _state.value = PartyState(active = true, playlistId = playlistId, settings = settings)
+        refreshFade()
         execute(newSession.start())
         startTicker()
     }
@@ -153,6 +179,7 @@ class PartyEngine(
             ),
         )
         _state.value = PartyState(active = true, playlistId = snapshot.playlistId, settings = settings)
+        refreshFade()
 
         val uri = uriOf(current.id)
         val playing = player.state.value
@@ -201,6 +228,7 @@ class PartyEngine(
     fun updateSettings(newSettings: PartySettings) = act { s ->
         if (newSettings.mode != settings.mode) s.changeMode(newSettings.mode)
         settings = newSettings
+        refreshFade()
         publish()
     }
 
@@ -243,6 +271,12 @@ class PartyEngine(
         val playing = player.state.value ?: return
         val now = clock()
 
+        handoff?.let { h ->
+            followHandoff(h, playing, now)
+            publish()
+            return
+        }
+
         if (playing.trackUri != uriOf(song.id)) {
             // Spotify takes a moment to report the song we just asked for.
             if (now - lastCommandAtMs < SWITCH_GRACE_MS) return
@@ -263,6 +297,18 @@ class PartyEngine(
                 execute(s.onTrackEnded())
             }
             playing.isPaused -> Unit
+            fadeMs > 0 && plan?.exit is Exit.CutAt &&
+                position >= (plan.exit as Exit.CutAt).positionMs - settings.cutLeadMs - QUEUE_LEAD_MS -> {
+                val cutMs = (plan.exit as Exit.CutAt).positionMs
+                record(if (plan.entry is Entry.AtDrop) PartyEventKind.DROP_ENTRY else PartyEventKind.CUT)
+                // A cut already inside the song's last seconds needs no jump: its own fade is about to start.
+                val fadeFrom = cutMs.takeIf { it < fadeStartOf(playing) }
+                beginHandoff(playing, s.onCutPointReached(), fadeFrom, target = fadeFrom ?: fadeStartOf(playing), position, now)
+            }
+            fadeMs > 0 && position >= fadeStartOf(playing) - QUEUE_LEAD_MS -> {
+                record(PartyEventKind.FULL)
+                beginHandoff(playing, s.onTrackEnded(), fadeFromMs = null, target = fadeStartOf(playing), position, now)
+            }
             plan?.exit is Exit.CutAt && position >= (plan.exit as Exit.CutAt).positionMs - settings.cutLeadMs -> {
                 record(if (plan.entry is Entry.AtDrop) PartyEventKind.DROP_ENTRY else PartyEventKind.CUT)
                 execute(s.onCutPointReached())
@@ -281,21 +327,85 @@ class PartyEngine(
             finish()
             return
         }
-        val uri = uriOf(command.trackId)
+        // Whatever Spotify was fading into, this command decides now.
+        handoff = null
+        switchNow(uriOf(command.trackId), command.fromMs)
+        publish()
+        session?.let { recorder.statsChanged(sessionId, it.stats, null) }
+        saveSnapshot()
+    }
+
+    /** The clean change: play the song, and land on its drop if it enters there. */
+    private suspend fun switchNow(uri: String, fromMs: Long) {
         lastCommandAtMs = clock()
         external = null
-        if (command.fromMs > 0) {
+        if (fromMs > 0) {
             if (settings.dropWithPause) player.pause()
             player.play(uri)
             withTimeoutOrNull(SWITCH_TIMEOUT_MS) { player.state.first { it?.trackUri == uri } }
-            player.seekTo(command.fromMs)
+            player.seekTo(fromMs)
             if (settings.dropWithPause) player.resume()
         } else {
             player.play(uri)
         }
-        publish()
+    }
+
+    private suspend fun refreshFade() {
+        fadeMs = if (settings.useSpotifyFade) player.crossfadeMs() ?: 0 else 0
+    }
+
+    /** Where Spotify starts fading out of [playing] on its own. */
+    private fun fadeStartOf(playing: PlayerState) = (playing.durationMs - fadeMs).coerceAtLeast(0)
+
+    /**
+     * Hands the change to Spotify: the next song goes to the queue a moment before the fade, so the fade goes to it.
+     * [target] is the position of the current song where the fade will start; past it plus a margin, the DJ stops
+     * waiting and switches by itself.
+     */
+    private suspend fun beginHandoff(playing: PlayerState, command: PlayCommand?, fadeFromMs: Long?, target: Long, position: Long, now: Long) {
+        if (command == null) {
+            finish()
+            return
+        }
+        val uri = uriOf(command.trackId)
+        player.queue(uri)
+        lastCommandAtMs = now
+        handoff = Handoff(
+            fromUri = playing.trackUri ?: "",
+            uri = uri,
+            entryMs = command.fromMs,
+            fadeFromMs = fadeFromMs,
+            deadlineMs = now + (target - position).coerceAtLeast(0) + HANDOFF_TIMEOUT_MS,
+            lastSeenMs = now,
+        )
         session?.let { recorder.statsChanged(sessionId, it.stats, null) }
-        saveSnapshot()
+    }
+
+    private suspend fun followHandoff(h: Handoff, playing: PlayerState, now: Long) {
+        // A pause stops the song, so it also stops the wait.
+        if (playing.isPaused) h.deadlineMs += now - h.lastSeenMs
+        h.lastSeenMs = now
+        when {
+            playing.trackUri == h.uri -> {
+                // Spotify is fading into our song. Jumping to its drop now keeps the fade: tested on the phone.
+                handoff = null
+                lastCommandAtMs = now
+                if (h.entryMs > 0) player.seekTo(h.entryMs)
+                saveSnapshot()
+            }
+            playing.trackUri != h.fromUri || now >= h.deadlineMs -> {
+                // Spotify faded into its own pick, or never faded: make the change the clean way.
+                handoff = null
+                switchNow(h.uri, h.entryMs)
+                saveSnapshot()
+            }
+            playing.isPaused -> Unit
+            h.fadeFromMs != null && !h.fadeStarted && playing.positionAt(now) >= h.fadeFromMs - settings.cutLeadMs -> {
+                // The cut: send the song to where Spotify starts its fade, a second early so the fade begins at once.
+                h.fadeStarted = true
+                player.seekTo((fadeStartOf(playing) - FADE_MARGIN_MS).coerceAtLeast(0))
+            }
+        }
     }
 
     /** Saved on every song and every few seconds, so a killed app loses seconds, not the party. */
@@ -372,5 +482,10 @@ class PartyEngine(
         const val SWITCH_TIMEOUT_MS = 3_000L
         const val STOPPED_AT_END_MS = 1_500L
         const val SNAPSHOT_EVERY_MS = 10_000L
+        /** How early the next song is queued: the spike showed Spotify needs well under a second to take it. */
+        const val QUEUE_LEAD_MS = 1_500L
+        /** A cut lands this far before the fade start, so the fade begins the moment the jump lands. */
+        const val FADE_MARGIN_MS = 1_000L
+        const val HANDOFF_TIMEOUT_MS = 4_000L
     }
 }
