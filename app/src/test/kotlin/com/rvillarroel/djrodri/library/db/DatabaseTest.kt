@@ -95,4 +95,23 @@ class DatabaseTest {
         assertEquals("HORA_LOCA", session.mode)
         assertEquals(mapOf("a" to 52_300L), store.dropMarks(listOf("a", "b")))
     }
+
+    @Test
+    fun `a drop corrected in the editor replaces the old mark, and can go back to automatic`() = runTest {
+        db.analysis().upsertDropMark(DropMarkEntity("a", 52_300, markedAtMs = 1))
+
+        db.analysis().upsertDropMark(DropMarkEntity("a", 61_000, markedAtMs = 2))
+        assertEquals(mapOf("a" to 61_000L), store.dropMarks(listOf("a")))
+
+        db.analysis().deleteDropMark("a")
+        assertEquals(emptyMap<String, Long>(), store.dropMarks(listOf("a")))
+    }
+
+    @Test
+    fun `the editor reads times the way you type them`() {
+        assertEquals(65_000L, com.rvillarroel.djrodri.ui.parseTime("1:05"))
+        assertEquals(42_000L, com.rvillarroel.djrodri.ui.parseTime("42"))
+        assertNull(com.rvillarroel.djrodri.ui.parseTime("1:75"))
+        assertNull(com.rvillarroel.djrodri.ui.parseTime("uno"))
+    }
 }

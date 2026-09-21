@@ -85,6 +85,10 @@ interface AnalysisDao {
     @Upsert
     suspend fun upsertDropMark(mark: DropMarkEntity)
 
+    /** Forget your mark: the drop goes back to what the analysis estimates. */
+    @Query("DELETE FROM drop_mark WHERE trackId = :trackId")
+    suspend fun deleteDropMark(trackId: String)
+
     @Query("SELECT COUNT(*) FROM drop_mark")
     fun dropMarkCount(): Flow<Int>
 }

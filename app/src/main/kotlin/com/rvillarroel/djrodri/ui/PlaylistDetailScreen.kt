@@ -2,6 +2,7 @@ package com.rvillarroel.djrodri.ui
 
 import android.app.Activity
 import android.app.Application
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +17,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.LocalActivity
@@ -28,12 +32,17 @@ import com.rvillarroel.djrodri.analysis.AnalysisUiState
 import com.rvillarroel.djrodri.container
 import com.rvillarroel.djrodri.data.analysis.Coverage
 import com.rvillarroel.djrodri.domain.dj.CueEstimator
+import com.rvillarroel.djrodri.domain.dj.StyleFamily
 import com.rvillarroel.djrodri.domain.dj.TrackProfile
 import com.rvillarroel.djrodri.domain.dj.TransitionPlanner
 import com.rvillarroel.djrodri.data.analysis.SourceTrack
 import com.rvillarroel.djrodri.ui.theme.DjColors
+import android.os.SystemClock
+import com.rvillarroel.djrodri.library.db.DropMarkEntity
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class TrackRow(val track: SourceTrack, val profile: TrackProfile)
 
@@ -48,11 +57,16 @@ class PlaylistDetailViewModel(app: Application) : AndroidViewModel(app) {
     fun analysis(playlistId: String) = container.analysisScheduler.state(playlistId)
     fun playlist(playlistId: String) = container.library.playlist(playlistId)
 
+    private var loadedId: String? = null
+
     fun load(playlistId: String) = viewModelScope.launch {
         // The view model outlives the screen: without this, one playlist's error shows up on the next one.
         message.value = null
-        rows.value = emptyList()
-        coverage.value = null
+        if (playlistId != loadedId) {
+            rows.value = emptyList()
+            coverage.value = null
+            loadedId = playlistId
+        }
         runCatching {
             val tracks = container.library.tracks(playlistId)
             val profiles = container.analyzer.profiles(tracks).associateBy { it.id }
@@ -81,6 +95,43 @@ class PlaylistDetailViewModel(app: Application) : AndroidViewModel(app) {
         message.value = container.switchParty(playlistId)
         if (message.value == null) onDone()
     }
+
+    // ---- Drop editor: your ear corrects what the analysis guessed -------------------------------------------------
+
+    /** Your drop for this song, from now on in every party. */
+    fun saveDrop(trackId: String, positionMs: Long) = viewModelScope.launch {
+        container.database.analysis().upsertDropMark(DropMarkEntity(trackId, positionMs, System.currentTimeMillis()))
+        loadedId?.let { load(it) }
+    }
+
+    /** Back to the drop the analysis estimates. */
+    fun clearDrop(trackId: String) = viewModelScope.launch {
+        container.database.analysis().deleteDropMark(trackId)
+        loadedId?.let { load(it) }
+    }
+
+    /** Plays the song from [fromMs] so you can hear whether the drop lands there. Returns why not, if it cannot. */
+    suspend fun preview(activity: Activity, row: TrackRow, fromMs: Long): String? {
+        if (party.value.active) return "Hay una fiesta sonando: termínala para escuchar desde aquí"
+        if (!container.ensureRemoteConnected(activity)) return "No se pudo conectar con la app de Spotify"
+        container.remote.play(row.track.uri)
+        withTimeoutOrNull(PREVIEW_WAIT_MS) { container.remote.nowPlaying.first { it?.track?.uri == row.track.uri } }
+        container.remote.seekTo(fromMs.coerceAtLeast(0))
+        return null
+    }
+
+    /** Where the song is right now, if it is the one playing: that is where you heard the drop. */
+    fun positionOf(row: TrackRow): Long? = container.remote.nowPlaying.value
+        ?.takeIf { it.track.uri == row.track.uri }
+        ?.snapshot?.positionAt(SystemClock.elapsedRealtime())
+
+    fun stopPreview() {
+        if (!party.value.active) container.remote.pause()
+    }
+
+    private companion object {
+        const val PREVIEW_WAIT_MS = 3_000L
+    }
 }
 
 @Composable
@@ -94,6 +145,7 @@ fun PlaylistDetailScreen(playlistId: String, onBack: () -> Unit, onPartyStarted:
     val party by vm.party.collectAsStateWithLifecycle()
     val activity = LocalActivity.current
     val scope = rememberCoroutineScope()
+    var editing by remember { mutableStateOf<TrackRow?>(null) }
 
     LaunchedEffect(playlistId, analysis is AnalysisUiState.Done) { vm.load(playlistId) }
 
@@ -149,7 +201,19 @@ fun PlaylistDetailScreen(playlistId: String, onBack: () -> Unit, onPartyStarted:
             message?.let { Text(it, color = DjColors.Warning, modifier = Modifier.padding(top = 6.dp)) }
         }
 
-        items(rows, key = { it.track.id }) { row -> TrackLine(row) }
+        item {
+            if (rows.isNotEmpty()) Text("Toca una canción para revisar o corregir su drop.", color = DjColors.TextDim)
+        }
+        items(rows, key = { it.track.id }) { row -> TrackLine(row, onClick = { editing = row }) }
+    }
+
+    editing?.let { row ->
+        // The row is refreshed after a save, so the dialog always shows the drop as it is now.
+        val fresh = rows.firstOrNull { it.track.id == row.track.id } ?: row
+        DropEditorDialog(fresh, vm, onDismiss = {
+            vm.stopPreview()
+            editing = null
+        })
     }
 }
 
@@ -167,13 +231,15 @@ private fun CoverageSummary(c: Coverage) {
 }
 
 @Composable
-private fun TrackLine(row: TrackRow) {
+private fun TrackLine(row: TrackRow, onClick: () -> Unit) {
     val cues = CueEstimator.estimate(row.profile)
     val p = row.profile
-    Panel {
+    Panel(Modifier.clickable(onClick = onClick)) {
         Text("${row.track.name} — ${row.track.artist}", style = MaterialTheme.typography.titleMedium)
         val facts = buildList {
+            StyleFamily.of(p).takeIf { it != StyleFamily.UNKNOWN }?.let { add(it.label) }
             if (p.genres.isNotEmpty()) add(p.genres.take(3).joinToString("/"))
+            p.vocals?.let { add("voz ${(it.density * 100).toInt()} %") }
             p.bpm?.let { add("${it.toInt()} BPM") }
             p.key?.let { add("tono $it") }
             p.chorus?.let { add("coro x${it.occurrences.size}") }
