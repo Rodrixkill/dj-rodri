@@ -42,6 +42,14 @@ class BeatTrackerTest {
     }
 
     @Test
+    fun `a club track heard at half time is told the way a DJ counts it`() {
+        assertEquals(126.4, BeatTracker.dancefloorTempo(63.2), 1e-9)
+        assertEquals(92.3, BeatTracker.dancefloorTempo(92.3), 1e-9)
+        assertEquals(174.0, BeatTracker.dancefloorTempo(174.0), 1e-9)
+        assertEquals(100.0, BeatTracker.dancefloorTempo(200.0), 1e-9)
+    }
+
+    @Test
     fun `music with no pulse is reported as unsure, so it is never beatmatched`() {
         val random = Random(3)
         val noise = FloatArray(6_000) { random.nextFloat() }

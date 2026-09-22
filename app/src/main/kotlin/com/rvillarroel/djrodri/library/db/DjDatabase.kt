@@ -12,8 +12,9 @@ import androidx.sqlite.execSQL
     entities = [
         PlaylistEntity::class, TrackEntity::class, PlaylistTrackEntity::class, AnalysisEntity::class,
         DropMarkEntity::class, PartySessionEntity::class, PlayEventEntity::class, PartySnapshotEntity::class,
+        LocalPlaylistEntity::class, LocalPlaylistItemEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class DjDatabase : RoomDatabase() {
@@ -21,6 +22,7 @@ abstract class DjDatabase : RoomDatabase() {
     abstract fun analysis(): AnalysisDao
     abstract fun party(): PartyDao
     abstract fun partySnapshot(): PartySnapshotDao
+    abstract fun localPlaylists(): LocalPlaylistDao
 
     companion object {
         /**
@@ -61,9 +63,22 @@ abstract class DjDatabase : RoomDatabase() {
             }
         }
 
+        /** Version 5 keeps playlists of your own files for the DJ decks: two new tables, nothing else touched. */
+        internal val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS local_playlist (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL, createdAtMs INTEGER NOT NULL)",
+                )
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS local_playlist_item (playlistId INTEGER NOT NULL, position INTEGER NOT NULL, songId INTEGER NOT NULL, PRIMARY KEY(playlistId, position))",
+                )
+                connection.execSQL("CREATE INDEX IF NOT EXISTS index_local_playlist_item_playlistId ON local_playlist_item (playlistId)")
+            }
+        }
+
         fun create(context: Context): DjDatabase =
             Room.databaseBuilder(context, DjDatabase::class.java, "djrodri.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
     }
 }

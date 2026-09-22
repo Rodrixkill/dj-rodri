@@ -39,7 +39,7 @@ object BeatTracker {
         }
         if (best <= 0.0) return null
 
-        val bpm = 60_000.0 / (bestLag * hopMs.toDouble())
+        val bpm = dancefloorTempo(60_000.0 / (bestLag * hopMs.toDouble()))
         val phase = bestPhase(flux, bestLag)
         val mean = total / (maxLag - minLag + 1)
         // How much the winning period stands out from every other one: a steady dance track scores far above a mean.
@@ -50,6 +50,20 @@ object BeatTracker {
             confidence = confidence,
         )
     }
+
+    /**
+     * The same pulse, said the way a DJ counts it: 63 is heard as 126, 200 as 100. Doubling keeps every beat found
+     * (the grid just gains one between each), so the phase stays right.
+     */
+    fun dancefloorTempo(bpm: Double): Double {
+        var t = bpm
+        while (t < DANCEFLOOR_MIN) t *= 2
+        while (t >= DANCEFLOOR_MAX) t /= 2
+        return t
+    }
+
+    const val DANCEFLOOR_MIN = 85.0
+    const val DANCEFLOOR_MAX = 180.0
 
     /** Keeps only what grows: a beat is where the sound rises, not where it merely is loud. */
     private fun accentuate(envelope: FloatArray): DoubleArray {

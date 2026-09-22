@@ -37,6 +37,9 @@ import com.rvillarroel.djrodri.spotify.SpotifyWebApi
 import com.rvillarroel.djrodri.spotify.TokenStore
 import com.rvillarroel.djrodri.voice.VoiceInput
 import com.rvillarroel.djrodri.ui.TrackActions
+import com.rvillarroel.djrodri.localdj.DjMixer
+import com.rvillarroel.djrodri.localdj.LocalAnalysis
+import com.rvillarroel.djrodri.localdj.LocalLibrary
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -98,6 +101,9 @@ class AppContainer(private val context: Context) {
 
     /** Hear, queue, fix a drop: the same actions from every screen that shows a song. */
     val trackActions by lazy { TrackActions(this) }
+
+    /** The DJ decks for your own files: two songs decoded in memory (hence the large heap in the manifest). */
+    val dj by lazy { DjMixer(context, appScope, LocalLibrary(context), LocalAnalysis(context), database.localPlaylists()) }
 
     val remote = RemoteController()
     val party by lazy {

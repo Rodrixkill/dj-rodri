@@ -52,12 +52,13 @@ import com.rvillarroel.djrodri.ui.theme.Motion
 import com.rvillarroel.djrodri.ui.theme.Radius
 import com.rvillarroel.djrodri.ui.theme.Space
 
-/** The four places of the app. Discover → listen → organize → party. */
+/** The five places of the app. Discover → listen → organize → party, and the decks for your own files. */
 enum class Tab(val label: String, val icon: ImageVector) {
     HOME("Inicio", DjIcons.Home),
     SEARCH("Buscar", DjIcons.Search),
     LIBRARY("Biblioteca", DjIcons.Library),
     PARTY("Fiesta", DjIcons.Party),
+    DJ("DJ", DjIcons.Mixer),
 }
 
 sealed interface Screen {
@@ -65,6 +66,7 @@ sealed interface Screen {
     data object Search : Screen
     data object Library : Screen
     data object Party : Screen
+    data object Decks : Screen
     data class Playlist(val id: String) : Screen
     data object Settings : Screen
     data object Lab : Screen
@@ -75,6 +77,7 @@ private fun Tab.root(): Screen = when (this) {
     Tab.SEARCH -> Screen.Search
     Tab.LIBRARY -> Screen.Library
     Tab.PARTY -> Screen.Party
+    Tab.DJ -> Screen.Decks
 }
 
 /**
@@ -176,6 +179,7 @@ private fun ScreenContent(
         Screen.Search -> SearchScreen(onParty = onParty)
         Screen.Library -> LibraryScreen(onOpenPlaylist = onOpenPlaylist, onSettings = onSettings)
         Screen.Party -> PartyScreen(onLibrary = onLibrary)
+        Screen.Decks -> DjScreen()
         is Screen.Playlist -> PlaylistDetailScreen(playlistId = screen.id, onBack = onBack, onPartyStarted = onParty)
         Screen.Settings -> SettingsScreen(onBack = onBack, onLab = onLab)
         Screen.Lab -> LabScreen(onBack = onBack)

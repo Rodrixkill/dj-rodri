@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Voice requests: recognised on the phone, and nothing is applied until you tap. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- The DJ decks play your own music files. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -21,6 +23,7 @@
     <application
         android:name=".DjRodriApplication"
         android:allowBackup="false"
+        android:largeHeap="true"
         android:icon="@drawable/ic_launcher"
         android:label="DJ Rodri"
         android:supportsRtl="true"

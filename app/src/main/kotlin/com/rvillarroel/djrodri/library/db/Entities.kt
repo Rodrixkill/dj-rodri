@@ -89,3 +89,19 @@ data class PlayEventEntity(
     val positionMs: Long,
     val atMs: Long,
 )
+
+/** A playlist of your own files for the DJ decks (nothing to do with Spotify's). */
+@Entity(tableName = "local_playlist")
+data class LocalPlaylistEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val createdAtMs: Long,
+)
+
+/** A song of a local playlist, by its MediaStore id: the file itself is never copied. */
+@Entity(tableName = "local_playlist_item", primaryKeys = ["playlistId", "position"], indices = [Index("playlistId")])
+data class LocalPlaylistItemEntity(
+    val playlistId: Long,
+    val position: Int,
+    val songId: Long,
+)

@@ -94,6 +94,21 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun `sets of your own files arrive as empty tables, and every song and mark stays`() {
+        helper.createDatabase(version = 4).use { db ->
+            db.execSQL("INSERT INTO track (id, uri, name, artist, album, durationMs, isrc, imageUrl) VALUES ('t1', 'spotify:track:t1', 'Tema', 'Artista', 'Album', 200000, NULL, 'https://i/1')")
+            db.execSQL("INSERT INTO drop_mark (trackId, positionMs, markedAtMs) VALUES ('t1', 52300, 10)")
+        }
+
+        helper.runMigrationsAndValidate(version = 5, migrations = listOf(DjDatabase.MIGRATION_4_5)).use { db ->
+            db.readRow("SELECT COUNT(*) FROM local_playlist") { assertEquals(0, it.getInt(0)) }
+            db.readRow("SELECT COUNT(*) FROM local_playlist_item") { assertEquals(0, it.getInt(0)) }
+            db.readRow("SELECT imageUrl FROM track") { assertEquals("https://i/1", it.getText(0)) }
+            db.readRow("SELECT positionMs FROM drop_mark") { assertEquals(52_300L, it.getLong(0)) }
+        }
+    }
+
     private fun SQLiteConnection.readRow(sql: String, assertions: (androidx.sqlite.SQLiteStatement) -> Unit) {
         prepare(sql).use { statement ->
             assertTrue("sin filas: $sql", statement.step())

@@ -150,3 +150,61 @@ interface PartyDao {
     @Query("SELECT * FROM party_session ORDER BY startedAtMs DESC LIMIT :limit")
     fun recentSessions(limit: Int = 20): Flow<List<PartySessionEntity>>
 }
+
+data class LocalPlaylistWithCount(val id: Long, val name: String, val songs: Int)
+
+@Dao
+interface LocalPlaylistDao {
+    @Query(
+        """
+        SELECT p.id, p.name, COUNT(i.songId) AS songs FROM local_playlist p
+        LEFT JOIN local_playlist_item i ON i.playlistId = p.id
+        GROUP BY p.id ORDER BY p.createdAtMs DESC
+        """,
+    )
+    fun playlists(): Flow<List<LocalPlaylistWithCount>>
+
+    @Insert
+    suspend fun insert(playlist: LocalPlaylistEntity): Long
+
+    @Query("UPDATE local_playlist SET name = :name WHERE id = :id")
+    suspend fun rename(id: Long, name: String)
+
+    @Query("SELECT songId FROM local_playlist_item WHERE playlistId = :playlistId ORDER BY position")
+    suspend fun songIds(playlistId: Long): List<Long>
+
+    @Query("SELECT COALESCE(MAX(position) + 1, 0) FROM local_playlist_item WHERE playlistId = :playlistId")
+    suspend fun nextPosition(playlistId: Long): Int
+
+    @Insert
+    suspend fun insertItem(item: LocalPlaylistItemEntity)
+
+    @Query("DELETE FROM local_playlist_item WHERE playlistId = :playlistId")
+    suspend fun clear(playlistId: Long)
+
+    @Insert
+    suspend fun insertItems(items: List<LocalPlaylistItemEntity>)
+
+    @Query("DELETE FROM local_playlist WHERE id = :id")
+    suspend fun deletePlaylist(id: Long)
+
+    /** Adds at the end; a song already in the playlist is not added twice. */
+    @Transaction
+    suspend fun add(playlistId: Long, songId: Long) {
+        if (songId in songIds(playlistId)) return
+        insertItem(LocalPlaylistItemEntity(playlistId, nextPosition(playlistId), songId))
+    }
+
+    /** Rewrites the order: removing or moving a song renumbers the rest. */
+    @Transaction
+    suspend fun replace(playlistId: Long, songIds: List<Long>) {
+        clear(playlistId)
+        insertItems(songIds.mapIndexed { index, id -> LocalPlaylistItemEntity(playlistId, index, id) })
+    }
+
+    @Transaction
+    suspend fun delete(playlistId: Long) {
+        clear(playlistId)
+        deletePlaylist(playlistId)
+    }
+}

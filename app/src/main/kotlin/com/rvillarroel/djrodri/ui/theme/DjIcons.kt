@@ -51,6 +51,16 @@ object DjIcons {
         "M12 2.5v2", "M12 19.5v2", "M2.5 12h2", "M19.5 12h2", "M5.3 5.3l1.4 1.4", "M17.3 17.3l1.4 1.4", "M5.3 18.7l1.4-1.4", "M17.3 6.7l1.4-1.4",
     )
 
+    /** Two platters and a fader: the DJ tab. */
+    val Mixer = line("Mixer", "M7.5 5a4.5 4.5 0 1 0 0 9a4.5 4.5 0 1 0 0-9z", "M7.5 8.5a1 1 0 1 0 0 2a1 1 0 1 0 0-2z", "M16.5 5a4.5 4.5 0 1 0 0 9a4.5 4.5 0 1 0 0-9z", "M16.5 8.5a1 1 0 1 0 0 2a1 1 0 1 0 0-2z", "M5 19h14", "M12 17v4")
+    val Loop = line("Loop", "M17 3l3 3-3 3", "M4 11V9a3 3 0 0 1 3-3h13", "M7 21l-3-3 3-3", "M20 13v2a3 3 0 0 1-3 3H4")
+    val Echo = line("Echo", "M5 12h1", "M9 8.5a5 5 0 0 1 0 7", "M12.5 5.5a9.5 9.5 0 0 1 0 13", "M16 3a13 13 0 0 1 0 18")
+    val Stop = line("Stop", "M7 7h10v10H7z")
+    val Pads = line("Pads", "M4 4h7v7H4z", "M13 4h7v7h-7z", "M4 13h7v7H4z", "M13 13h7v7h-7z")
+    val JumpBack = line("JumpBack", "M11 6 5 12l6 6", "M19 6l-6 6 6 6")
+    val JumpForward = line("JumpForward", "M13 6l6 6-6 6", "M5 6l6 6-6 6")
+    val Sync = line("Sync", "M4 9h13l-3-3", "M20 15H7l3 3")
+
     val Play = solid("Play", "M7.5 4.8v14.4a.8.8 0 0 0 1.2.7l11-7.2a.8.8 0 0 0 0-1.4l-11-7.2a.8.8 0 0 0-1.2.7z")
     val Pause = solid("Pause", "M6.5 4.5h3.5v15H6.5z", "M14 4.5h3.5v15H14z")
     val Next = solid("Next", "M5 5.3v13.4a.7.7 0 0 0 1.1.6l9.4-6.7a.7.7 0 0 0 0-1.2L6.1 4.7a.7.7 0 0 0-1.1.6z", "M17 5h2.5v14H17z")
