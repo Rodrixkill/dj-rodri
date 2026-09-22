@@ -96,6 +96,7 @@ class RemoteController(var logger: (String) -> Unit = { android.util.Log.d("DJRo
     fun pause() = call("pause") { it.playerApi.pause() }
     fun resume() = call("resume") { it.playerApi.resume() }
     fun seekTo(positionMs: Long) = call("seekTo $positionMs") { it.playerApi.seekTo(positionMs) }
+    fun setShuffle(on: Boolean) = call("shuffle $on") { it.playerApi.setShuffle(on) }
 
     suspend fun crossfade(): CrossfadeState? = await { it.playerApi.crossfadeState }
 

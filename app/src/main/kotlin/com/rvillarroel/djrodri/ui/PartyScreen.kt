@@ -131,9 +131,13 @@ class PartyViewModel(app: Application) : AndroidViewModel(app) {
         covers.value = ids.associateWith { container.library.coversOf(it) }
     }
 
-    fun start(activity: android.app.Activity, playlistId: String, onStarted: () -> Unit) = viewModelScope.launch {
+    /** Spotify's own Mix, when it plays instead of the party. */
+    val mix = container.spotifyMix.state
+    val mixSession = container.spotifyMix
+
+    fun start(activity: android.app.Activity, playlistId: String, spotifyMix: Boolean, onStarted: () -> Unit) = viewModelScope.launch {
         starting.value = true
-        message.value = container.startParty(activity, playlistId)
+        message.value = if (spotifyMix) container.startSpotifyMix(activity, playlistId) else container.startParty(activity, playlistId)
         starting.value = false
         if (message.value == null) onStarted()
     }
@@ -148,12 +152,18 @@ class PartyViewModel(app: Application) : AndroidViewModel(app) {
 @Composable
 fun PartyScreen(onLibrary: () -> Unit, vm: PartyViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val mix by vm.mix.collectAsStateWithLifecycle()
 
     // The screen stays on while the party is in front of you: nobody wants to unlock the phone to skip a song.
     val view = LocalView.current
     DisposableEffect(Unit) {
         view.keepScreenOn = true
         onDispose { view.keepScreenOn = false }
+    }
+
+    if (mix.active) {
+        SpotifyMixPlayer(mix, vm)
+        return
     }
 
     if (!state.active) {
@@ -165,7 +175,7 @@ fun PartyScreen(onLibrary: () -> Unit, vm: PartyViewModel = viewModel()) {
                 if (state.stats.fullPlays + state.stats.cuts > 0) {
                     "La última: ${state.stats.fullPlays} completas, ${state.stats.cuts} cortes y ${state.stats.dropEntries} entradas al drop."
                 } else {
-                    "Elige una playlist y dale play: el DJ decide el orden y cuándo cambiar."
+                    "Elige una playlist: DJ Rodri decide el orden y cuándo cambiar, o deja que suene el Mix que armaste en Spotify."
                 },
                 action = "Elegir playlist",
                 onAction = { picking = true },
@@ -418,6 +428,7 @@ private fun PlaylistPicker(vm: PartyViewModel, onDismiss: () -> Unit) {
     val starting by vm.starting.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val activity = androidx.activity.compose.LocalActivity.current
+    var spotifyMix by remember { mutableStateOf(false) }
     val ordered = remember(playlists) { playlists.sortedByDescending { if (it.cachedTracks > 0) it.analyzedTracks.toFloat() / it.cachedTracks else 0f } }
     LaunchedEffect(playlists) { vm.loadCovers(playlists.filter { it.imageUrl == null }.map { it.id }) }
 
@@ -428,8 +439,16 @@ private fun PlaylistPicker(vm: PartyViewModel, onDismiss: () -> Unit) {
     ) {
         Column(Modifier.padding(horizontal = Space.gutter).padding(bottom = Space.xl)) {
             Text("¿Qué suena en la fiesta?", style = DjType.section, color = Dj.colors.textPrimary)
+            Row(Modifier.padding(top = Space.sm), horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
+                DjChip("Mezcla DJ Rodri", !spotifyMix, { spotifyMix = false })
+                DjChip("Mix de Spotify", spotifyMix, { spotifyMix = true })
+            }
             Text(
-                if (starting) "Conectando con Spotify…" else "Las analizadas mezclan mejor: el DJ sabe dónde están sus coros y drops.",
+                when {
+                    starting -> "Conectando con Spotify…"
+                    spotifyMix -> "Suena la playlist entera, en orden, con las transiciones que armaste en Spotify. DJ Rodri no corta ni salta."
+                    else -> "Las analizadas mezclan mejor: el DJ sabe dónde están sus coros y drops."
+                },
                 style = DjType.meta,
                 color = Dj.colors.textSecondary,
                 modifier = Modifier.padding(top = Space.xxs, bottom = Space.sm),
@@ -439,10 +458,50 @@ private fun PlaylistPicker(vm: PartyViewModel, onDismiss: () -> Unit) {
                 items(ordered.size) { index ->
                     val playlist = ordered[index]
                     PlaylistLine(playlist, covers[playlist.id].orEmpty()) {
-                        if (!starting) activity?.let { vm.start(it, playlist.id, onDismiss) }
+                        if (!starting) activity?.let { vm.start(it, playlist.id, spotifyMix, onDismiss) }
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * Spotify's Mix playing: the song, the bar and the transport, nothing of the DJ's own. The transitions are Spotify's,
+ * so there is no plan to show and no move to arm.
+ */
+@Composable
+private fun SpotifyMixPlayer(mix: com.rvillarroel.djrodri.spotify.SpotifyMixState, vm: PartyViewModel) {
+    val session = vm.mixSession
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Space.gutter, vertical = Space.xs)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("MIX DE SPOTIFY", style = DjType.technicalSmall, color = Dj.colors.textTertiary)
+                Text(mix.playlistName, style = DjType.meta, color = Dj.colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            TertiaryButton("Terminar", session::stop)
+        }
+        AnimatedContent(
+            targetState = mix.imageUrl,
+            transitionSpec = { (fadeIn(tween(Motion.SLOW)) + scaleIn(tween(Motion.SLOW), initialScale = 0.96f)) togetherWith fadeOut(tween(Motion.BASE)) },
+            label = "mixCover",
+            modifier = Modifier.fillMaxWidth().padding(top = Space.md),
+            contentAlignment = Alignment.Center,
+        ) { url ->
+            Artwork(url, Modifier.widthIn(max = 420.dp).fillMaxWidth(), radius = Radius.lg, description = mix.title)
+        }
+        Text(mix.title ?: "…", style = DjType.pageTitle, color = Dj.colors.textPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = Space.xl))
+        Text(mix.artist.orEmpty(), style = DjType.body, color = Dj.colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        SeekBar(mix.positionMs, mix.durationMs, session::seek, Modifier.padding(top = Space.sm))
+        Row(Modifier.fillMaxWidth().padding(top = Space.sm), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+            DjIconButton(DjIcons.Previous, "Anterior", session::previous, size = IconSize.lg)
+            PlayButton(playing = !mix.isPaused, onClick = session::togglePause, size = 72.dp)
+            DjIconButton(DjIcons.Next, "Siguiente", session::next, size = IconSize.lg)
+        }
+        InlineMessage(
+            "Las transiciones las hace Spotify con tu Mix. Si no oyes ninguna, revisa en Spotify que la playlist tenga el Mix armado. Saltar a mano puede cortar la transición que venía.",
+            Modifier.padding(top = Space.lg),
+            isError = false,
+        )
     }
 }

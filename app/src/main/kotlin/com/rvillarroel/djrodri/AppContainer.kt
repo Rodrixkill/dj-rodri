@@ -34,7 +34,9 @@ import com.rvillarroel.djrodri.party.PartyService
 import com.rvillarroel.djrodri.settings.SettingsRepository
 import com.rvillarroel.djrodri.spotify.AppRemotePlayer
 import com.rvillarroel.djrodri.spotify.RemoteController
+import com.rvillarroel.djrodri.spotify.LIKED_SONGS_ID
 import com.rvillarroel.djrodri.spotify.SpotifyAuth
+import com.rvillarroel.djrodri.spotify.SpotifyMixSession
 import com.rvillarroel.djrodri.spotify.SpotifyWebApi
 import com.rvillarroel.djrodri.spotify.TokenStore
 import com.rvillarroel.djrodri.voice.VoiceInput
@@ -134,8 +136,22 @@ class AppContainer(private val context: Context) {
         return tracks.distinctBy { it.id }.map { PartyTrack(it, profiles.getValue(it.id)) }
     }
 
+    /** Spotify's own Mix: the whole playlist, in order, with the transitions made in Spotify. DJ Rodri only watches. */
+    val spotifyMix by lazy { SpotifyMixSession(remote, library, appScope) }
+
+    suspend fun startSpotifyMix(activityContext: Context, playlistId: String): String? {
+        if (playlistId == LIKED_SONGS_ID) return "El Mix de Spotify es para playlists: «Tus me gusta» no tiene transiciones"
+        if (!ensureRemoteConnected(activityContext)) return "No se pudo conectar con la app de Spotify. ¿Está instalada y con sesión?"
+        // One DJ at a time: the party would cut and skip over Spotify's transitions.
+        if (party.state.value.active) party.stop()
+        val name = database.library().playlist(playlistId)?.name.orEmpty()
+        spotifyMix.start(playlistId, name)
+        return null
+    }
+
     suspend fun startParty(activityContext: Context, playlistId: String): String? {
         if (!ensureRemoteConnected(activityContext)) return "No se pudo conectar con la app de Spotify. ¿Está instalada y con sesión?"
+        spotifyMix.stop()
         val tracks = runCatching { partyTracks(playlistId) }.getOrElse { return it.message ?: "No se pudieron cargar las canciones" }
         if (tracks.isEmpty()) return "Esta playlist no tiene canciones que Spotify nos deje leer"
         settings.rememberPlaylist(playlistId)

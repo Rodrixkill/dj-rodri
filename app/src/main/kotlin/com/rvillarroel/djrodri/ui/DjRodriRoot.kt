@@ -43,6 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rvillarroel.djrodri.AppContainer
 import com.rvillarroel.djrodri.data.party.PartyState
 import com.rvillarroel.djrodri.spike.LabScreen
+import com.rvillarroel.djrodri.spotify.SpotifyMixState
 import com.rvillarroel.djrodri.ui.theme.Dj
 import com.rvillarroel.djrodri.ui.theme.DjIcons
 import com.rvillarroel.djrodri.ui.theme.DjTheme
@@ -89,6 +90,7 @@ fun DjRodriRoot(container: AppContainer, loginError: String?, onLogin: () -> Uni
     val loggedIn by container.auth.loggedIn.collectAsStateWithLifecycle()
     val party by container.party.state.collectAsStateWithLifecycle()
     val theme by container.settings.theme.collectAsStateWithLifecycle()
+    val mix by container.spotifyMix.state.collectAsStateWithLifecycle()
 
     var tab by remember { mutableStateOf(if (party.active) Tab.PARTY else Tab.HOME) }
     val saveable = rememberSaveableStateHolder()
@@ -140,7 +142,7 @@ fun DjRodriRoot(container: AppContainer, loginError: String?, onLogin: () -> Uni
                     }
                 }
             }
-            val miniPlayer = party.active && tab != Tab.PARTY
+            val miniPlayer = (party.active || mix.active) && tab != Tab.PARTY
 
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 if (maxWidth >= WIDE) {
@@ -148,13 +150,13 @@ fun DjRodriRoot(container: AppContainer, loginError: String?, onLogin: () -> Uni
                         SideRail(tab, ::select)
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             Box(Modifier.weight(1f)) { content() }
-                            if (miniPlayer) MiniPlayer(party, container) { select(Tab.PARTY) }
+                            if (miniPlayer) MiniPlayer(party, mix, container) { select(Tab.PARTY) }
                         }
                     }
                 } else {
                     Column(Modifier.fillMaxSize()) {
                         Box(Modifier.weight(1f)) { content() }
-                        if (miniPlayer) MiniPlayer(party, container) { select(Tab.PARTY) }
+                        if (miniPlayer) MiniPlayer(party, mix, container) { select(Tab.PARTY) }
                         BottomBar(tab, ::select)
                     }
                 }
@@ -232,9 +234,27 @@ private fun SideRail(current: Tab, onSelect: (Tab) -> Unit) {
 
 /** The party follows you around the app: what plays, a play/pause, a skip, and one tap back to it. */
 @Composable
-private fun MiniPlayer(party: PartyState, container: AppContainer, onOpen: () -> Unit) {
-    val track = party.current ?: return
-    val progress = if (party.durationMs > 0) party.positionMs.toFloat() / party.durationMs else 0f
+private fun MiniPlayer(party: PartyState, mix: SpotifyMixState, container: AppContainer, onOpen: () -> Unit) {
+    // The Spotify Mix and the party never play together: whichever is on fills the bar.
+    val title: String
+    val artist: String
+    val imageUrl: String?
+    val paused: Boolean
+    val progress: Float
+    if (mix.active) {
+        title = mix.title ?: return
+        artist = mix.artist.orEmpty()
+        imageUrl = mix.imageUrl
+        paused = mix.isPaused
+        progress = if (mix.durationMs > 0) mix.positionMs.toFloat() / mix.durationMs else 0f
+    } else {
+        val track = party.current ?: return
+        title = track.name
+        artist = track.artist
+        imageUrl = track.imageUrl
+        paused = party.isPaused
+        progress = if (party.durationMs > 0) party.positionMs.toFloat() / party.durationMs else 0f
+    }
     Column(
         Modifier
             .fillMaxWidth()
@@ -244,15 +264,19 @@ private fun MiniPlayer(party: PartyState, container: AppContainer, onOpen: () ->
             .clickable(onClick = onOpen),
     ) {
         Row(Modifier.fillMaxWidth().padding(Space.xs), verticalAlignment = Alignment.CenterVertically) {
-            AnimatedContent(track.imageUrl, transitionSpec = { fadeIn(tween(Motion.BASE)) togetherWith fadeOut(tween(Motion.BASE)) }, label = "miniArt") { url ->
+            AnimatedContent(imageUrl, transitionSpec = { fadeIn(tween(Motion.BASE)) togetherWith fadeOut(tween(Motion.BASE)) }, label = "miniArt") { url ->
                 Artwork(url, Modifier.size(44.dp), radius = Radius.sm)
             }
             Column(Modifier.weight(1f).padding(horizontal = Space.sm)) {
-                Text(track.name, style = DjType.cardTitle, color = Dj.colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(track.artist, style = DjType.meta, color = Dj.colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, style = DjType.cardTitle, color = Dj.colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(artist, style = DjType.meta, color = Dj.colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            DjIconButton(if (party.isPaused) DjIcons.Play else DjIcons.Pause, if (party.isPaused) "Reproducir" else "Pausa", container.party::togglePause)
-            DjIconButton(DjIcons.Next, "Siguiente", container.party::next)
+            DjIconButton(
+                if (paused) DjIcons.Play else DjIcons.Pause,
+                if (paused) "Reproducir" else "Pausa",
+                { if (mix.active) container.spotifyMix.togglePause() else container.party.togglePause() },
+            )
+            DjIconButton(DjIcons.Next, "Siguiente", { if (mix.active) container.spotifyMix.next() else container.party.next() })
         }
         ProgressLine(progress, Modifier.padding(horizontal = Space.sm).padding(bottom = Space.xxs))
     }
