@@ -24,6 +24,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,12 +87,37 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     fun loadCovers(ids: List<String>) = viewModelScope.launch {
         covers.value = ids.associateWith { container.library.coversOf(it) }
     }
+
+    /** The copy of your likes: null when idle, (done, total) while copying; total 0 while the likes are read. */
+    val copying = MutableStateFlow<Pair<Int, Int>?>(null)
+    val copyResult = MutableStateFlow<String?>(null)
+    val hasCopy get() = container.settings.likedCopyId != null
+    fun canCreatePlaylists() = container.auth.canCreatePlaylists()
+
+    /** One of your playlists already called [name] (any capitals): it is filled instead of making another. */
+    fun playlistNamed(name: String): PlaylistWithProgress? =
+        playlists.value?.firstOrNull { it.id != LIKED_SONGS_ID && it.name.trim().equals(name.trim(), ignoreCase = true) }
+
+    fun copyLiked(name: String) {
+        if (copying.value != null) return
+        copyResult.value = null
+        val target = if (hasCopy) null else playlistNamed(name)?.id
+        viewModelScope.launch {
+            val failure = container.copyLikedToPlaylist(name.trim().ifBlank { DEFAULT_COPY_NAME }, target) { done, total -> copying.value = done to total }
+            copying.value = null
+            copyResult.value = failure ?: "Listo: «${name.trim().ifBlank { DEFAULT_COPY_NAME }}» está en tu Spotify. Ábrela allí y activa el Mix."
+        }
+    }
+
+    companion object {
+        const val DEFAULT_COPY_NAME = "Me Gusta Mix"
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 /** Your collection: the shortcuts first, then every playlist as a cover you can recognize at a glance. */
 @Composable
-fun LibraryScreen(onOpenPlaylist: (String) -> Unit, onSettings: () -> Unit, vm: LibraryViewModel = viewModel()) {
+fun LibraryScreen(onOpenPlaylist: (String) -> Unit, onSettings: () -> Unit, onLogin: () -> Unit, vm: LibraryViewModel = viewModel()) {
     val playlists by vm.playlists.collectAsStateWithLifecycle()
     val recent by vm.recent.collectAsStateWithLifecycle()
     val dropMarks by vm.dropMarks.collectAsStateWithLifecycle()
@@ -95,6 +125,7 @@ fun LibraryScreen(onOpenPlaylist: (String) -> Unit, onSettings: () -> Unit, vm: 
     val pulled by vm.pulled.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val covers by vm.covers.collectAsStateWithLifecycle()
+    var copySheet by remember { mutableStateOf(false) }
 
     // First visit: the local copy is empty, so read it from Spotify once.
     LaunchedEffect(playlists) {
@@ -131,6 +162,11 @@ fun LibraryScreen(onOpenPlaylist: (String) -> Unit, onSettings: () -> Unit, vm: 
         item {
             Column(Modifier.padding(top = Space.xs)) {
                 LibraryLink(DjIcons.Heart, "Tus me gusta", "Tus canciones guardadas en Spotify") { onOpenPlaylist(LIKED_SONGS_ID) }
+                LibraryLink(
+                    DjIcons.Playlist,
+                    if (vm.hasCopy) "Actualizar tu playlist de me gusta" else "Tus me gusta como playlist",
+                    "Para usar el Mix de Spotify, que no funciona en «Tus me gusta»",
+                ) { copySheet = true }
                 LibraryLink(DjIcons.Clock, "Escuchado en tus fiestas", if (recent.isEmpty()) "Todavía nada" else "${recent.size} canciones recientes", onClick = null)
                 LibraryLink(DjIcons.Flag, "Drops marcados", if (dropMarks == 0) "Márcalos en la fiesta o desde una canción" else "$dropMarks canciones con tu drop", onClick = null)
             }
@@ -162,6 +198,91 @@ fun LibraryScreen(onOpenPlaylist: (String) -> Unit, onSettings: () -> Unit, vm: 
             )
         }
     }
+    }
+
+    if (copySheet) LikedCopySheet(vm, onLogin, onDismiss = { copySheet = false })
+}
+
+/** Creates (or updates) a private playlist with all your likes, after telling you exactly what will happen. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LikedCopySheet(vm: LibraryViewModel, onLogin: () -> Unit, onDismiss: () -> Unit) {
+    val copying by vm.copying.collectAsStateWithLifecycle()
+    val result by vm.copyResult.collectAsStateWithLifecycle()
+    // If you already made the playlist in Spotify, its name is offered, so it gets filled.
+    var name by remember { mutableStateOf(vm.playlistNamed(LibraryViewModel.DEFAULT_COPY_NAME)?.name ?: LibraryViewModel.DEFAULT_COPY_NAME) }
+    val allowed = vm.canCreatePlaylists()
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Dj.colors.surface) {
+        Column(Modifier.padding(horizontal = Space.gutter).padding(bottom = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.sm)) {
+            Text(if (vm.hasCopy) "Actualizar tu playlist de me gusta" else "Tus me gusta como playlist", style = DjType.section, color = Dj.colors.textPrimary)
+            Text(
+                if (vm.hasCopy) {
+                    "La playlist que ya creaste se reemplaza con tus me gusta de hoy, en el mismo orden. No se crea otra."
+                } else {
+                    "Se crea en tu Spotify una playlist privada con todas tus canciones que te gustan, de la más nueva a la más antigua. Después, en Spotify, ábrela y activa el Mix."
+                },
+                style = DjType.meta,
+                color = Dj.colors.textSecondary,
+            )
+            val progress = copying
+            when {
+                progress != null -> {
+                    ProgressLine(if (progress.second > 0) progress.first.toFloat() / progress.second else 0f)
+                    Text(
+                        if (progress.second == 0) "Leyendo tus me gusta…" else "Copiando ${progress.first} de ${progress.second} canciones…",
+                        style = DjType.meta,
+                        color = Dj.colors.textSecondary,
+                    )
+                }
+                !allowed -> {
+                    Text(
+                        "Primero Spotify te va a pedir permiso para que DJ Rodri pueda crear playlists privadas. Solo se usa para esto.",
+                        style = DjType.meta,
+                        color = Dj.colors.textSecondary,
+                    )
+                    PrimaryButton("Dar permiso en Spotify", onLogin, Modifier.fillMaxWidth())
+                }
+                else -> {
+                    val match = if (vm.hasCopy) null else vm.playlistNamed(name)
+                    if (!vm.hasCopy) {
+                        Row(
+                            Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(Radius.md)).background(Dj.colors.surfaceSecondary).padding(horizontal = Space.md),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            androidx.compose.foundation.text.BasicTextField(
+                                name,
+                                { name = it },
+                                singleLine = true,
+                                textStyle = DjType.body.copy(color = Dj.colors.textPrimary),
+                                cursorBrush = androidx.compose.ui.graphics.SolidColor(Dj.colors.accent),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    match?.let {
+                        Text(
+                            when (val count = it.trackCount ?: 0) {
+                                0 -> "Ya tienes «${it.name}», vacía: se llena esa, sin crear otra."
+                                else -> "Ya tienes «${it.name}» con $count canciones: se reemplazan por tus me gusta."
+                            },
+                            style = DjType.meta,
+                            color = if ((it.trackCount ?: 0) > 0) Dj.colors.accentBright else Dj.colors.textSecondary,
+                        )
+                    }
+                    PrimaryButton(
+                        when {
+                            vm.hasCopy -> "Actualizar"
+                            match != null -> "Llenar «${match.name}»"
+                            else -> "Crear playlist"
+                        },
+                        { vm.copyLiked(name) },
+                        Modifier.fillMaxWidth(),
+                        icon = DjIcons.Plus,
+                    )
+                }
+            }
+            result?.let { InlineMessage(it, isError = !it.startsWith("Listo")) }
+        }
     }
 }
 

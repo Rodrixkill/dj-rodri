@@ -138,6 +138,7 @@ fun DjRodriRoot(container: AppContainer, loginError: String?, onLogin: () -> Uni
                                 stacks[Tab.PARTY] = listOf(Screen.Party)
                                 tab = Tab.PARTY
                             },
+                            onLogin = onLogin,
                         )
                     }
                 }
@@ -175,11 +176,12 @@ private fun ScreenContent(
     onSearch: () -> Unit,
     onLibrary: () -> Unit,
     onParty: () -> Unit,
+    onLogin: () -> Unit,
 ) {
     when (screen) {
         Screen.Home -> HomeScreen(onSearch = onSearch, onOpenPlaylist = onOpenPlaylist, onParty = onParty, onSettings = onSettings, onLibrary = onLibrary)
         Screen.Search -> SearchScreen(onParty = onParty)
-        Screen.Library -> LibraryScreen(onOpenPlaylist = onOpenPlaylist, onSettings = onSettings)
+        Screen.Library -> LibraryScreen(onOpenPlaylist = onOpenPlaylist, onSettings = onSettings, onLogin = onLogin)
         Screen.Party -> PartyScreen(onLibrary = onLibrary)
         Screen.Decks -> DjScreen()
         is Screen.Playlist -> PlaylistDetailScreen(playlistId = screen.id, onBack = onBack, onPartyStarted = onParty)

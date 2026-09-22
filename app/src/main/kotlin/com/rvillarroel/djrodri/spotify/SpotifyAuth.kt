@@ -23,7 +23,13 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-data class SpotifyTokens(val accessToken: String, val refreshToken: String?, val expiresAtMs: Long)
+data class SpotifyTokens(
+    val accessToken: String,
+    val refreshToken: String?,
+    val expiresAtMs: Long,
+    /** What this session may do; empty for sessions saved before the app kept track. */
+    val scopes: Set<String> = emptySet(),
+)
 
 /**
  * Tokens encrypted with a key that never leaves the Android Keystore. Nothing about the Spotify session is
@@ -43,6 +49,7 @@ class TokenStore(context: Context) {
                 accessToken = json.getString("access"),
                 refreshToken = json.optString("refresh").takeIf { it.isNotEmpty() },
                 expiresAtMs = json.getLong("expiresAt"),
+                scopes = json.optString("scopes").split(" ").filter { it.isNotBlank() }.toSet(),
             )
         }.getOrNull()
     }
@@ -52,6 +59,7 @@ class TokenStore(context: Context) {
             .put("access", tokens.accessToken)
             .put("refresh", tokens.refreshToken.orEmpty())
             .put("expiresAt", tokens.expiresAtMs)
+            .put("scopes", tokens.scopes.joinToString(" "))
             .toString()
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key())
@@ -109,6 +117,8 @@ class SpotifyAuth(private val store: TokenStore, private val http: OkHttpClient)
                 accessToken = response.accessToken!!,
                 refreshToken = response.refreshToken,
                 expiresAtMs = System.currentTimeMillis() + response.expiresIn * 1_000L,
+                // Spotify grants what was asked for, all or nothing.
+                scopes = SCOPES.toSet(),
             ),
         )
         _loggedIn.value = true
@@ -122,6 +132,9 @@ class SpotifyAuth(private val store: TokenStore, private val http: OkHttpClient)
         val refreshToken = tokens.refreshToken ?: return@withLock null.also { logout() }
         refresh(refreshToken)?.accessToken
     }
+
+    /** Whether you already let the app create playlists; if not, a new login asks you. */
+    fun canCreatePlaylists(): Boolean = store.load()?.scopes?.contains(PLAYLIST_WRITE) == true
 
     fun logout() {
         store.clear()
@@ -147,6 +160,9 @@ class SpotifyAuth(private val store: TokenStore, private val http: OkHttpClient)
                     accessToken = json.getString("access_token"),
                     refreshToken = json.optString("refresh_token").takeIf { it.isNotEmpty() } ?: refreshToken,
                     expiresAtMs = System.currentTimeMillis() + json.optLong("expires_in", 3600) * 1_000L,
+                    // Spotify says which permissions the renewed token has; without that, the old ones still hold.
+                    scopes = json.optString("scope").split(" ").filter { it.isNotBlank() }.toSet()
+                        .ifEmpty { store.load()?.scopes.orEmpty() },
                 ).also(store::save)
             }
         }.getOrNull()
@@ -154,9 +170,12 @@ class SpotifyAuth(private val store: TokenStore, private val http: OkHttpClient)
 
     companion object {
         private const val EXPIRY_MARGIN_MS = 60_000L
+        const val PLAYLIST_WRITE = "playlist-modify-private"
         val SCOPES = arrayOf(
             "playlist-read-private", "playlist-read-collaborative", "user-library-read",
             "user-read-playback-state", "user-modify-playback-state", "app-remote-control",
+            // Only used when you ask for a playlist copy of your likes; always private.
+            PLAYLIST_WRITE,
         )
     }
 }

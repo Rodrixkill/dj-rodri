@@ -35,6 +35,7 @@ import com.rvillarroel.djrodri.settings.SettingsRepository
 import com.rvillarroel.djrodri.spotify.AppRemotePlayer
 import com.rvillarroel.djrodri.spotify.RemoteController
 import com.rvillarroel.djrodri.spotify.LIKED_SONGS_ID
+import com.rvillarroel.djrodri.spotify.SpotifyApiException
 import com.rvillarroel.djrodri.spotify.SpotifyAuth
 import com.rvillarroel.djrodri.spotify.SpotifyMixSession
 import com.rvillarroel.djrodri.spotify.SpotifyWebApi
@@ -148,6 +149,32 @@ class AppContainer(private val context: Context) {
         spotifyMix.start(playlistId, name)
         return null
     }
+
+    /**
+     * Your likes as a real playlist ("Tus me gusta" is not one, so Spotify's Mix can't be used on it). The songs go
+     * in the same order, newest first. Made once; after that the same playlist is updated, never duplicated.
+     * @return why it failed, or null.
+     */
+    suspend fun copyLikedToPlaylist(name: String, targetId: String?, onProgress: (done: Int, total: Int) -> Unit): String? = runCatching {
+        onProgress(0, 0)
+        val uris = webApi.tracks(LIKED_SONGS_ID).map { it.uri }.distinct()
+        if (uris.isEmpty()) return "No encontré canciones en «Tus me gusta»"
+        val description = "Tus me gusta, copiados por DJ Rodri para usar el Mix de Spotify."
+        // A playlist you made for this in Spotify is filled; otherwise the copy made before, or a new one.
+        targetId?.let { settings.likedCopyId = it }
+        val existing = settings.likedCopyId
+        val id = existing ?: webApi.createPlaylist(name, description).also { settings.likedCopyId = it }
+        try {
+            webApi.replaceItems(id, uris) { done -> onProgress(done, uris.size) }
+        } catch (e: SpotifyApiException) {
+            // You deleted the copy in Spotify: make it again.
+            if (e.code != 404 || existing == null) throw e
+            val fresh = webApi.createPlaylist(name, description).also { settings.likedCopyId = it }
+            webApi.replaceItems(fresh, uris) { done -> onProgress(done, uris.size) }
+        }
+        library.refreshPlaylists()
+        null
+    }.getOrElse { it.message ?: "No se pudo crear la playlist" }
 
     suspend fun startParty(activityContext: Context, playlistId: String): String? {
         if (!ensureRemoteConnected(activityContext)) return "No se pudo conectar con la app de Spotify. ¿Está instalada y con sesión?"

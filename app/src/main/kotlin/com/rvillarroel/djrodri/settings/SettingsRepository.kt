@@ -103,6 +103,11 @@ class SettingsRepository(context: Context) {
 
     fun rememberPlaylist(id: String) = prefs.edit().putString(KEY_LAST_PLAYLIST, id).apply()
 
+    /** The playlist made from your likes, so updating it doesn't make another one. */
+    var likedCopyId: String?
+        get() = prefs.getString(KEY_LIKED_COPY, null)
+        set(value) = prefs.edit().putString(KEY_LIKED_COPY, value).apply()
+
     private fun loadParty() = PartySettings(
         mode = runCatching { DjMode.valueOf(prefs.getString(KEY_MODE, null)!!) }.getOrDefault(DjMode.FIESTA),
         dropWithPause = prefs.getBoolean(KEY_DROP_PAUSE, false),
@@ -118,6 +123,7 @@ class SettingsRepository(context: Context) {
         const val KEY_GUIDE = "hyperos_guide_done"
         const val KEY_LOCAL_AI = "use_local_ai"
         const val KEY_LAST_PLAYLIST = "last_playlist"
+        const val KEY_LIKED_COPY = "liked_copy"
         const val KEY_THEME = "theme"
         const val KEY_NAME = "profile_name"
         const val KEY_AVATAR = "profile_avatar"

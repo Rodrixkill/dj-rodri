@@ -4,9 +4,11 @@ import com.rvillarroel.djrodri.data.analysis.SourceTrack
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 
 data class Profile(val name: String?, val imageUrl: String?)
@@ -91,6 +93,22 @@ class SpotifyWebApi(
         return result.take(limit)
     }
 
+    /** A new private playlist of yours; returns its id. */
+    suspend fun createPlaylist(name: String, description: String): String =
+        send("POST", "/me/playlists", JSONObject().put("name", name).put("description", description).put("public", false)).getString("id")
+
+    /**
+     * Makes the playlist hold exactly [uris], in that order: the first 100 replace what was there, the rest are added
+     * 100 at a time (Spotify's limit per call).
+     */
+    suspend fun replaceItems(playlistId: String, uris: List<String>, onProgress: (Int) -> Unit = {}) {
+        val chunks = uris.chunked(MAX_ITEMS_PER_CALL).ifEmpty { listOf(emptyList()) }
+        chunks.forEachIndexed { index, chunk ->
+            send(if (index == 0) "PUT" else "POST", "/playlists/$playlistId/items", JSONObject().put("uris", JSONArray(chunk)))
+            onProgress(minOf(uris.size, (index + 1) * MAX_ITEMS_PER_CALL))
+        }
+    }
+
     /** Fallback if App Remote fails: skip through the Web API. Returns the HTTP code. */
     suspend fun skipNext(): Int = withContext(Dispatchers.IO) {
         val bearer = token(false) ?: return@withContext 401
@@ -102,15 +120,24 @@ class SpotifyWebApi(
     private fun nextPath(json: JSONObject): String? =
         json.optString("next").takeIf { it.isNotEmpty() && it != "null" }?.removePrefix(BASE)
 
-    private suspend fun get(path: String): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun get(path: String): JSONObject = send("GET", path, null)
+
+    private suspend fun send(method: String, path: String, payload: JSONObject?): JSONObject = withContext(Dispatchers.IO) {
         var forceRefresh = false
         repeat(MAX_ATTEMPTS) { attempt ->
             val bearer = token(forceRefresh) ?: throw SpotifyApiException(401, "Inicia sesión en Spotify")
-            val request = Request.Builder().url("$BASE$path").header("Authorization", "Bearer $bearer").build()
+            val request = Request.Builder().url("$BASE$path").header("Authorization", "Bearer $bearer")
+                .method(method, payload?.toString()?.toRequestBody("application/json".toMediaType()))
+                .build()
             http.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 when {
-                    response.isSuccessful -> return@withContext JSONObject(body)
+                    response.isSuccessful -> return@withContext if (body.isBlank()) JSONObject() else JSONObject(body)
+                    response.code == 403 && method != "GET" -> throw SpotifyApiException(
+                        403,
+                        "Spotify no dejó crear la playlist: vuelve a dar permiso a DJ Rodri e inténtalo otra vez.",
+                    )
+                    response.code == 404 && method != "GET" -> throw SpotifyApiException(404, "Esa playlist ya no existe en Spotify")
                     response.code == 401 && !forceRefresh -> forceRefresh = true
                     response.code == 429 && attempt < MAX_ATTEMPTS - 1 -> {
                         // 429 says QUOTA_EXCEEDED when the shared developer quota runs out; waiting is all we can do.
@@ -133,5 +160,6 @@ class SpotifyWebApi(
     private companion object {
         const val BASE = "https://api.spotify.com/v1"
         const val MAX_ATTEMPTS = 3
+        const val MAX_ITEMS_PER_CALL = 100
     }
 }
