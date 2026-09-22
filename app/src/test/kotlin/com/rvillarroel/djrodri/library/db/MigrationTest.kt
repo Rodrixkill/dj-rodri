@@ -109,6 +109,20 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun `styles you set by hand get their own empty table, and every set and mark stays`() {
+        helper.createDatabase(version = 5).use { db ->
+            db.execSQL("INSERT INTO local_playlist (id, name, createdAtMs) VALUES (1, 'Previa', 5)")
+            db.execSQL("INSERT INTO drop_mark (trackId, positionMs, markedAtMs) VALUES ('t1', 52300, 10)")
+        }
+
+        helper.runMigrationsAndValidate(version = 6, migrations = listOf(DjDatabase.MIGRATION_5_6)).use { db ->
+            db.readRow("SELECT COUNT(*) FROM genre_override") { assertEquals(0, it.getInt(0)) }
+            db.readRow("SELECT name FROM local_playlist") { assertEquals("Previa", it.getText(0)) }
+            db.readRow("SELECT positionMs FROM drop_mark") { assertEquals(52_300L, it.getLong(0)) }
+        }
+    }
+
     private fun SQLiteConnection.readRow(sql: String, assertions: (androidx.sqlite.SQLiteStatement) -> Unit) {
         prepare(sql).use { statement ->
             assertTrue("sin filas: $sql", statement.step())

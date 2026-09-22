@@ -5,7 +5,9 @@ import android.os.SystemClock
 import com.rvillarroel.djrodri.AppContainer
 import com.rvillarroel.djrodri.data.analysis.SourceTrack
 import com.rvillarroel.djrodri.domain.dj.TrackProfile
+import com.rvillarroel.djrodri.domain.dj.StyleFamily
 import com.rvillarroel.djrodri.library.db.DropMarkEntity
+import com.rvillarroel.djrodri.library.db.GenreOverrideEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +33,20 @@ class TrackActions(private val container: AppContainer) {
 
     /** Back to the drop the analysis estimates. */
     suspend fun clearDrop(trackId: String) = container.database.analysis().deleteDropMark(trackId)
+
+    /** "Esto es rock": your style for the song, above what Deezer or MusicBrainz say. Null goes back to them. */
+    suspend fun setStyle(trackId: String, family: StyleFamily?) {
+        val dao = container.database.analysis()
+        if (family == null) dao.deleteGenreOverride(trackId)
+        else dao.upsertGenreOverride(GenreOverrideEntity(trackId, family.name, System.currentTimeMillis()))
+        // The genre mixes on Home and Search follow your correction right away.
+        container.rebuildStyleIndex()
+    }
+
+    /** The style you set for this song, or null when the sources decide. */
+    suspend fun styleOf(trackId: String): StyleFamily? =
+        container.database.analysis().genreOverrides(listOf(trackId)).firstOrNull()
+            ?.let { o -> StyleFamily.entries.firstOrNull { it.name == o.family } }
 
     /** Plays the song from [fromMs]. Returns why not, when it cannot (a party is on, Spotify is not reachable). */
     suspend fun preview(activity: Activity, track: SourceTrack, fromMs: Long): String? {

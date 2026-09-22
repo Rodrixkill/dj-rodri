@@ -73,12 +73,13 @@ object Genres {
         setOf("trance", "psytrance", "progressive trance", "uplifting trance") to TRANCE,
         setOf("drum and bass", "drum & bass", "dnb", "jungle", "liquid funk") to DRUM_AND_BASS,
         setOf("dubstep", "brostep", "riddim") to DUBSTEP,
-        setOf("edm", "electro", "dance", "dance pop", "big room", "electronic dance music") to EDM,
+        setOf("edm", "electro", "dance", "big room", "electronic dance music") to EDM,
         setOf("electronic", "electronica", "electronico", "electronic music", "ambient", "downtempo", "breakbeat") to ELECTRONIC,
         setOf("afrobeats", "afrobeat", "afropop", "afro pop", "afro house") to AFROBEATS,
         setOf("amapiano") to AMAPIANO,
         setOf("dancehall", "ragga") to DANCEHALL,
-        setOf("pop", "synthpop", "electropop", "k-pop", "latin pop", "pop latino", "teen pop") to POP,
+        // Dance-pop is pop you can dance to, not dance music: Dua Lipa is not a house mix.
+        setOf("pop", "synthpop", "synth pop", "electropop", "dance pop", "europop", "k-pop", "latin pop", "pop latino", "teen pop") to POP,
         setOf("rock", "classic rock", "hard rock", "rock en espanol", "rock nacional", "alternative rock", "grunge") to ROCK,
         setOf("metal", "heavy metal", "death metal", "nu metal") to METAL,
         setOf("punk", "pop punk", "punk rock") to PUNK,
@@ -118,6 +119,9 @@ object Genres {
             .maxByOrNull { it.length }
             ?.let { byAlias.getValue(it) }
     }
+
+    /** A canonical genre and the families it belongs to: "house" → house, electronic, edm. */
+    fun withFamilies(genre: String): Set<String> = setOf(genre) + families[genre].orEmpty()
 
     /** Every canonical genre a set of tags stands for, families included. */
     fun expand(tags: Iterable<String>): Set<String> = buildSet {

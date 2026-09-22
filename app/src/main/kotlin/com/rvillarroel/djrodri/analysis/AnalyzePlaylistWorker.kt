@@ -16,6 +16,7 @@ import androidx.work.workDataOf
 import com.rvillarroel.djrodri.R
 import com.rvillarroel.djrodri.container
 import com.rvillarroel.djrodri.data.analysis.AnalysisProgress
+import com.rvillarroel.djrodri.library.db.toSource
 import com.rvillarroel.djrodri.spotify.SpotifyApiException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -40,8 +41,10 @@ class AnalyzePlaylistWorker(context: Context, params: WorkerParameters) : Corout
         runCatching { setForeground(foregroundInfo(0, 0)) }
 
         return runCatching {
-            val tracks = app.library.tracks(playlistId, refresh = refresh)
-            app.analyzer.analyze(tracks).collect { progress ->
+            val wholeLibrary = playlistId == WHOLE_LIBRARY
+            // The whole library only refreshes what was already analyzed (in practice, its genres); a playlist gets everything.
+            val tracks = if (wholeLibrary) app.database.library().allTracks().map { it.toSource() } else app.library.tracks(playlistId, refresh = refresh)
+            app.analyzer.analyze(tracks, onlyAnalyzed = wholeLibrary).collect { progress ->
                 if (progress is AnalysisProgress.Working) {
                     setProgress(workDataOf(KEY_DONE to progress.done, KEY_TOTAL to progress.total, KEY_TITLE to progress.currentTitle))
                     runCatching { setForeground(foregroundInfo(progress.done, progress.total)) }
@@ -65,7 +68,7 @@ class AnalyzePlaylistWorker(context: Context, params: WorkerParameters) : Corout
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Análisis de playlists", NotificationManager.IMPORTANCE_LOW))
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL)
             .setSmallIcon(R.drawable.ic_dj)
-            .setContentTitle("Analizando playlist")
+            .setContentTitle(if (inputData.getString(KEY_PLAYLIST) == WHOLE_LIBRARY) "Actualizando géneros" else "Analizando playlist")
             .setContentText(if (total > 0) "$done de $total canciones" else "Preparando…")
             .setProgress(total, done, total == 0)
             .setOngoing(true)
@@ -76,6 +79,9 @@ class AnalyzePlaylistWorker(context: Context, params: WorkerParameters) : Corout
 
     companion object {
         const val KEY_PLAYLIST = "playlist"
+
+        /** Instead of a playlist id: every analyzed song of the library, for "Actualizar géneros". */
+        const val WHOLE_LIBRARY = "__library__"
         const val KEY_REFRESH = "refresh"
         const val KEY_DONE = "done"
         const val KEY_TOTAL = "total"
@@ -95,6 +101,11 @@ class AnalysisScheduler(context: Context) {
             .build()
         workManager.enqueueUniqueWork(workName(playlistId), ExistingWorkPolicy.KEEP, request)
     }
+
+    /** Genres of every song already analyzed, asked again with today's sources. Resumes where it stopped. */
+    fun refreshLibraryGenres() = analyze(AnalyzePlaylistWorker.WHOLE_LIBRARY)
+
+    fun libraryGenresState(): Flow<AnalysisUiState> = state(AnalyzePlaylistWorker.WHOLE_LIBRARY)
 
     fun cancel(playlistId: String) = workManager.cancelUniqueWork(workName(playlistId))
 

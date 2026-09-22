@@ -66,6 +66,15 @@ data class DropMarkEntity(
     val markedAtMs: Long,
 )
 
+/** The style you gave a song by hand ("esto no es electrónica"): beats what any source says. */
+@Entity(tableName = "genre_override")
+data class GenreOverrideEntity(
+    @PrimaryKey val trackId: String,
+    /** A StyleFamily name. */
+    val family: String,
+    val markedAtMs: Long,
+)
+
 @Entity(tableName = "party_session")
 data class PartySessionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

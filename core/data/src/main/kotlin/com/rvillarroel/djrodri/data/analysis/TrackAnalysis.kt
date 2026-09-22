@@ -63,8 +63,14 @@ data class TrackAnalysis(
     val isFinal: Boolean get() = lyricsStatus != LyricsStatus.ERROR
 
     companion object {
-        /** Bump when what we fetch changes; older analyses are then refreshed. Version 2 added MusicBrainz genres. */
-        const val CURRENT_VERSION = 2
+        /**
+         * Bump when what we fetch changes; older analyses are then refreshed. Version 2 added MusicBrainz genres;
+         * version 3 decides them by votes, with Deezer's label genre.
+         */
+        const val CURRENT_VERSION = 3
+
+        /** From this version on, only the genres changed: the lyrics and numbers already stored are kept. */
+        const val GENRES_ONLY_FROM = 2
     }
 }
 
@@ -73,4 +79,7 @@ interface AnalysisStore {
     suspend fun analyses(trackIds: Collection<String>): Map<String, TrackAnalysis>
     suspend fun save(analysis: TrackAnalysis)
     suspend fun dropMarks(trackIds: Collection<String>): Map<String, Long>
+
+    /** Styles you set by hand ([com.rvillarroel.djrodri.domain.dj.StyleFamily] names): they beat every source. */
+    suspend fun genreOverrides(trackIds: Collection<String>): Map<String, String> = emptyMap()
 }

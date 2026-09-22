@@ -24,6 +24,11 @@ class RoomAnalysisStore(private val dao: AnalysisDao) : AnalysisStore {
         trackIds.distinct().chunked(MAX_IDS_PER_QUERY)
             .flatMap { dao.dropMarks(it) }
             .associate { it.trackId to it.positionMs }
+
+    override suspend fun genreOverrides(trackIds: Collection<String>): Map<String, String> =
+        trackIds.distinct().chunked(MAX_IDS_PER_QUERY)
+            .flatMap { dao.genreOverrides(it) }
+            .associate { it.trackId to it.family }
 }
 
 class RoomPartyRecorder(private val party: PartyDao, private val analysis: AnalysisDao) : PartyRecorder {

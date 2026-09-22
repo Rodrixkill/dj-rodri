@@ -20,6 +20,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,6 +70,11 @@ fun TrackSheet(row: TrackRow, onDismiss: () -> Unit, onChanged: () -> Unit = {})
     val scope = rememberCoroutineScope()
     var editing by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
+    var choosingStyle by remember { mutableStateOf(false) }
+    // Yours if you set it, otherwise what the sources decided.
+    var mine by remember(row.track.id) { mutableStateOf<StyleFamily?>(null) }
+    LaunchedEffect(row.track.id) { mine = actions.styleOf(row.track.id) }
+    val style = mine ?: StyleFamily.of(row.profile)
 
     if (editing) {
         DropEditorDialog(row, onDismiss = { editing = false; onDismiss() }, onChanged = onChanged)
@@ -91,6 +97,36 @@ fun TrackSheet(row: TrackRow, onDismiss: () -> Unit, onChanged: () -> Unit = {})
                     }
                 }
                 SheetAction(DjIcons.Flag, "Revisar el drop") { editing = true }
+                SheetAction(
+                    DjIcons.Music,
+                    "Género: " + (if (style == StyleFamily.UNKNOWN) "sin saber" else style.label) + (if (mine != null) " (tuyo)" else ""),
+                ) { choosingStyle = !choosingStyle }
+                if (choosingStyle) {
+                    Text(
+                        "¿Está mal? Elige el correcto: vale para las mezclas por estilo y para el DJ.",
+                        style = DjType.meta,
+                        color = Dj.colors.textSecondary,
+                        modifier = Modifier.padding(bottom = Space.xs),
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.xs), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                        DjChip("Automático", mine == null, {
+                            scope.launch {
+                                actions.setStyle(row.track.id, null)
+                                mine = null
+                                onChanged()
+                            }
+                        })
+                        StyleFamily.entries.filter { it != StyleFamily.UNKNOWN }.forEach { family ->
+                            DjChip(family.label.replaceFirstChar { it.uppercase() }, mine == family, {
+                                scope.launch {
+                                    actions.setStyle(row.track.id, family)
+                                    mine = family
+                                    onChanged()
+                                }
+                            })
+                        }
+                    }
+                }
             }
             note?.let { InlineMessage(it, Modifier.padding(top = Space.sm)) }
         }

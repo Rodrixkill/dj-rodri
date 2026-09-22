@@ -17,9 +17,11 @@ class PlaylistAnalyzerTest {
     private class MemoryStore : AnalysisStore {
         val saved = mutableMapOf<String, TrackAnalysis>()
         val marks = mutableMapOf<String, Long>()
+        val styles = mutableMapOf<String, String>()
         override suspend fun analyses(trackIds: Collection<String>) = saved.filterKeys { it in trackIds }
         override suspend fun save(analysis: TrackAnalysis) { saved[analysis.trackId] = analysis }
         override suspend fun dropMarks(trackIds: Collection<String>) = marks.filterKeys { it in trackIds }
+        override suspend fun genreOverrides(trackIds: Collection<String>) = styles.filterKeys { it in trackIds }
     }
 
     private val chorusLrc = buildString {
@@ -38,6 +40,7 @@ class PlaylistAnalyzerTest {
     private val lyricsCalls = mutableListOf<String>()
     private val featureCalls = mutableListOf<List<String>>()
     private val store = MemoryStore()
+    private var genresNow = setOf("house")
 
     private fun analyzer(
         lyrics: (String) -> Lyrics = { Lyrics.Synced(chorusLrc) },
@@ -46,7 +49,7 @@ class PlaylistAnalyzerTest {
         lyricsSource = { q -> lyricsCalls += q.title; lyrics(q.title) },
         featuresSource = { ids -> featureCalls += ids; features(ids) },
         genreSource = object : com.rvillarroel.djrodri.data.sources.GenreSource {
-            override suspend fun genresByIsrc(isrc: String) = com.rvillarroel.djrodri.data.sources.ArtistTags("mbid", "Artista", setOf("house"))
+            override suspend fun genresByIsrc(isrc: String) = com.rvillarroel.djrodri.data.sources.ArtistTags("mbid", "Artista", genresNow)
             override suspend fun genresByArtistName(name: String) = null
         },
         store = store,
@@ -121,5 +124,46 @@ class PlaylistAnalyzerTest {
 
         assertNull(profile.chorus)
         assertTrue(profile.durationMs > 0)
+    }
+
+    @Test
+    fun `when only the genre sources changed, genres are asked again and lyrics and numbers are kept`() = runTest {
+        analyzer().analyze(listOf(track("a"))).last()
+        // An analysis finished by the previous version, before genres were decided by votes.
+        store.saved["a"] = store.saved.getValue("a").copy(analyzerVersion = TrackAnalysis.GENRES_ONLY_FROM)
+        lyricsCalls.clear()
+        featureCalls.clear()
+        genresNow = setOf("pop")
+
+        analyzer().analyze(listOf(track("a"))).last()
+
+        val saved = store.saved.getValue("a")
+        assertEquals(setOf("pop"), saved.genres)
+        assertEquals(TrackAnalysis.CURRENT_VERSION, saved.analyzerVersion)
+        assertNotNull(saved.syncedLrc)
+        assertEquals(emptyList<String>(), lyricsCalls)
+        assertEquals(emptyList<List<String>>(), featureCalls)
+    }
+
+    @Test
+    fun `updating the library's genres never analyzes songs that were never analyzed`() = runTest {
+        analyzer().analyze(listOf(track("a"))).last()
+        lyricsCalls.clear()
+
+        analyzer().analyze(listOf(track("a"), track("never")), onlyAnalyzed = true).last()
+
+        assertEquals(emptyList<String>(), lyricsCalls)
+        assertNull(store.saved["never"])
+    }
+
+    @Test
+    fun `the style you set by hand beats what the sources say`() = runTest {
+        val analyzer = analyzer()
+        analyzer.analyze(listOf(track("a"))).last()
+        assertEquals(com.rvillarroel.djrodri.domain.dj.StyleFamily.ELECTRONIC, com.rvillarroel.djrodri.domain.dj.StyleFamily.of(analyzer.profiles(listOf(track("a"))).single()))
+
+        store.styles["a"] = "POP"
+
+        assertEquals(com.rvillarroel.djrodri.domain.dj.StyleFamily.POP, com.rvillarroel.djrodri.domain.dj.StyleFamily.of(analyzer.profiles(listOf(track("a"))).single()))
     }
 }

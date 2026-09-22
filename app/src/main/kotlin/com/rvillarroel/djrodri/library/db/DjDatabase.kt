@@ -12,9 +12,9 @@ import androidx.sqlite.execSQL
     entities = [
         PlaylistEntity::class, TrackEntity::class, PlaylistTrackEntity::class, AnalysisEntity::class,
         DropMarkEntity::class, PartySessionEntity::class, PlayEventEntity::class, PartySnapshotEntity::class,
-        LocalPlaylistEntity::class, LocalPlaylistItemEntity::class,
+        LocalPlaylistEntity::class, LocalPlaylistItemEntity::class, GenreOverrideEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class DjDatabase : RoomDatabase() {
@@ -76,9 +76,18 @@ abstract class DjDatabase : RoomDatabase() {
             }
         }
 
+        /** Version 6 keeps the styles you set by hand: one new table, nothing else touched. */
+        internal val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS genre_override (trackId TEXT NOT NULL PRIMARY KEY, family TEXT NOT NULL, markedAtMs INTEGER NOT NULL)",
+                )
+            }
+        }
+
         fun create(context: Context): DjDatabase =
             Room.databaseBuilder(context, DjDatabase::class.java, "djrodri.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
     }
 }

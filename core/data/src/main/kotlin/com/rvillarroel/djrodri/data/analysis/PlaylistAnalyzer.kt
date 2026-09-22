@@ -2,6 +2,8 @@ package com.rvillarroel.djrodri.data.analysis
 
 import com.rvillarroel.djrodri.data.sources.AudioFeatures
 import com.rvillarroel.djrodri.data.sources.AudioFeaturesSource
+import com.rvillarroel.djrodri.data.sources.ArtistTags
+import com.rvillarroel.djrodri.domain.dj.StyleFamily
 import com.rvillarroel.djrodri.data.sources.GenreSource
 import com.rvillarroel.djrodri.data.sources.Lyrics
 import com.rvillarroel.djrodri.data.sources.LyricsQuery
@@ -75,20 +77,29 @@ class PlaylistAnalyzer(
     /** Where the CPU work of building profiles runs; tests pass their own. */
     private val computation: CoroutineDispatcher = Dispatchers.Default,
 ) {
-    fun analyze(tracks: List<SourceTrack>, force: Boolean = false): Flow<AnalysisProgress> = flow {
-        val unique = tracks.distinctBy { it.id }
-        val cached = store.analyses(unique.map { it.id })
+    /**
+     * @param onlyAnalyzed only songs that already have an analysis: "update the genres of my library" must not turn
+     *   into analyzing every song you ever synced.
+     */
+    fun analyze(tracks: List<SourceTrack>, force: Boolean = false, onlyAnalyzed: Boolean = false): Flow<AnalysisProgress> = flow {
+        val cached = store.analyses(tracks.map { it.id }.distinct())
+        val unique = tracks.distinctBy { it.id }.filter { !onlyAnalyzed || it.id in cached }
         val pending = unique.filter { track ->
             force || cached[track.id]?.let { !it.isFinal || it.analyzerVersion < TrackAnalysis.CURRENT_VERSION } ?: true
         }
+        // Finished analyses from before the genre sources changed keep their lyrics and numbers: only genres are asked again.
+        val genresOnly = if (force) emptySet() else pending.filter { track ->
+            cached[track.id]?.let { it.isFinal && it.analyzerVersion >= TrackAnalysis.GENRES_ONLY_FROM } == true
+        }.map { it.id }.toSet()
 
         var done = unique.size - pending.size
         emit(AnalysisProgress.Working(done, unique.size, null))
 
-        val features = fetchFeatures(pending)
+        val features = fetchFeatures(pending.filter { it.id !in genresOnly })
         for ((index, track) in pending.withIndex()) {
             emit(AnalysisProgress.Working(done, unique.size, track.name))
-            store.save(analyzeOne(track, features))
+            val previous = cached[track.id]
+            store.save(if (track.id in genresOnly && previous != null) withNewGenres(track, previous) else analyzeOne(track, features))
             done++
             if (index < pending.lastIndex) delay(politenessDelayMs)
         }
@@ -113,21 +124,32 @@ class PlaylistAnalyzer(
      */
     private suspend fun profiles(tracks: List<SourceTrack>, analyses: Map<String, TrackAnalysis>): List<TrackProfile> {
         val marks = store.dropMarks(tracks.map { it.id })
+        val overrides = store.genreOverrides(tracks.map { it.id })
         return withContext(computation) {
             tracks.distinctBy { it.id }.map { track ->
                 val analysis = analyses[track.id]
                 val mark = marks[track.id]
-                val key = ProfileKey(track.id, analysis?.analyzedAtMs, analysis?.analyzerVersion, mark, track.durationMs)
+                val style = overrides[track.id]?.let { name -> StyleFamily.entries.firstOrNull { it.name == name } }
+                val key = ProfileKey(track.id, analysis?.analyzedAtMs, analysis?.analyzerVersion, mark, track.durationMs, style)
                 profileCache[key] ?: (
-                    analysis?.toProfile(track, mark)
-                        ?: TrackProfile(id = track.id, artist = track.artist, durationMs = track.durationMs, userDropMs = mark)
+                    (
+                        analysis?.toProfile(track, mark)
+                            ?: TrackProfile(id = track.id, artist = track.artist, durationMs = track.durationMs, userDropMs = mark)
+                        ).let { profile -> if (style == null) profile else profile.copy(genres = StyleFamily.genresOf(style)) }
                     ).also { profileCache[key] = it }
             }
         }
     }
 
     /** One entry per song version: a new analysis or a new drop mark makes a new key, so nothing goes stale. */
-    private data class ProfileKey(val trackId: String, val analyzedAtMs: Long?, val version: Int?, val dropMs: Long?, val durationMs: Long)
+    private data class ProfileKey(
+        val trackId: String,
+        val analyzedAtMs: Long?,
+        val version: Int?,
+        val dropMs: Long?,
+        val durationMs: Long,
+        val style: StyleFamily?,
+    )
 
     private val profileCache = ConcurrentHashMap<ProfileKey, TrackProfile>()
 
@@ -140,6 +162,25 @@ class PlaylistAnalyzer(
         } catch (e: Exception) {
             null // features unavailable this run: lyrics still get analyzed, the songs are marked for retry
         }
+
+    /** Genres asked again, everything else kept. If the sources fail, the old genres stay and the song is retried. */
+    private suspend fun withNewGenres(track: SourceTrack, previous: TrackAnalysis): TrackAnalysis {
+        val tags = track.isrc?.let { isrc ->
+            try {
+                genreSource.genresByIsrc(isrc) ?: ArtistTags(null, null, emptySet())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                return previous
+            }
+        }
+        return previous.copy(
+            genres = tags?.genres ?: previous.genres,
+            artistMbid = tags?.artistMbid ?: previous.artistMbid,
+            analyzerVersion = TrackAnalysis.CURRENT_VERSION,
+            analyzedAtMs = clock(),
+        )
+    }
 
     private suspend fun analyzeOne(track: SourceTrack, features: Map<String, AudioFeatures>?): TrackAnalysis {
         val lyrics = try {

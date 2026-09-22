@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -41,6 +42,8 @@ import com.rvillarroel.djrodri.ui.theme.Space
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class SearchViewModel(app: Application) : AndroidViewModel(app) {
@@ -54,6 +57,19 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
     val style = MutableStateFlow<StyleMix?>(null)
     val message = MutableStateFlow<String?>(null)
     private var searchJob: Job? = null
+    val genresState = container.analysisScheduler.libraryGenresState()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.rvillarroel.djrodri.analysis.AnalysisUiState.Idle)
+
+    fun refreshGenres() = container.analysisScheduler.refreshLibraryGenres()
+
+    /** You corrected a song's style: the groups are read again, and the open style shows its songs without it. */
+    fun styleChanged() = viewModelScope.launch {
+        val all = runCatching { container.styleMixes() }.getOrDefault(mixes.value.orEmpty())
+        mixes.value = all
+        val open = style.value ?: return@launch
+        val updated = all.firstOrNull { it.family == open.family }
+        if (updated == null) closeStyle() else openStyle(updated)
+    }
 
     fun load() = viewModelScope.launch {
         // Only reads the style groups the last analysis saved: nothing is recomputed by opening this tab.
@@ -125,10 +141,13 @@ fun SearchScreen(onParty: () -> Unit, vm: SearchViewModel = viewModel()) {
     val mixes by vm.mixes.collectAsStateWithLifecycle()
     val style by vm.style.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
+    val genresState by vm.genresState.collectAsStateWithLifecycle()
     val activity = LocalActivity.current
     var sheet by remember { mutableStateOf<TrackRow?>(null) }
 
     LaunchedEffect(Unit) { vm.load() }
+    // When a genre update finishes, the style groups it rebuilt are shown.
+    LaunchedEffect(genresState) { if (genresState is com.rvillarroel.djrodri.analysis.AnalysisUiState.Done) vm.styleChanged() }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = Space.gutter, vertical = Space.md)) {
         item { ScreenHeader(style?.let { "Mezcla ${it.family.label}" } ?: "Buscar", onBack = style?.let { { vm.closeStyle() } }) }
@@ -146,6 +165,14 @@ fun SearchScreen(onParty: () -> Unit, vm: SearchViewModel = viewModel()) {
                 Row(Modifier.padding(top = Space.xs), horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
                     PrimaryButton("Poner esta mezcla", { activity?.let { vm.playStyle(it, style!!, onParty) } }, icon = DjIcons.Play)
                 }
+            }
+            item {
+                Text(
+                    "¿Alguna no es ${style!!.family.label}? Tócala y corrige su género.",
+                    style = DjType.meta,
+                    color = Dj.colors.textSecondary,
+                    modifier = Modifier.padding(top = Space.sm),
+                )
             }
         }
         message?.let { item { InlineMessage(it, Modifier.padding(top = Space.sm)) } }
@@ -177,12 +204,37 @@ fun SearchScreen(onParty: () -> Unit, vm: SearchViewModel = viewModel()) {
                     item { EmptyState(DjIcons.Music, "Todavía no hay estilos", "Analiza una playlist y aquí aparecerán tus canciones agrupadas por estilo.") }
                 } else {
                     item { StyleGrid(styles, vm::openStyle) }
+                    item { GenreRefresh(genresState, vm::refreshGenres) }
                 }
             }
         }
     }
 
-    sheet?.let { TrackSheet(it, onDismiss = { sheet = null }) }
+    sheet?.let { TrackSheet(it, onDismiss = { sheet = null }, onChanged = vm::styleChanged) }
+}
+
+/** Genres asked again for the whole library, with the sources that decide by votes. Only when you ask. */
+@Composable
+private fun GenreRefresh(state: com.rvillarroel.djrodri.analysis.AnalysisUiState, onRefresh: () -> Unit) {
+    Column(Modifier.padding(top = Space.lg), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+        Text(
+            "¿Canciones en el estilo equivocado? Los géneros ahora se deciden entre Deezer y MusicBrainz. Actualízalos para toda tu biblioteca (tarda cerca de un segundo por canción) o corrige una canción tocándola.",
+            style = DjType.meta,
+            color = Dj.colors.textSecondary,
+        )
+        when (state) {
+            is com.rvillarroel.djrodri.analysis.AnalysisUiState.Running -> {
+                ProgressLine(if (state.total > 0) state.done.toFloat() / state.total else 0f)
+                Text(
+                    if (state.total > 0) "Actualizando géneros: ${state.done} de ${state.total}" else "Preparando…",
+                    style = DjType.meta,
+                    color = Dj.colors.textSecondary,
+                )
+            }
+            is com.rvillarroel.djrodri.analysis.AnalysisUiState.Failed -> InlineMessage(state.message, action = "Reintentar", onAction = onRefresh)
+            else -> SecondaryButton("Actualizar géneros", onRefresh, icon = DjIcons.Refresh)
+        }
+    }
 }
 
 @Composable

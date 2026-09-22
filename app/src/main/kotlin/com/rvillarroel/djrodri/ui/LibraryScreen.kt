@@ -15,7 +15,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -50,15 +54,29 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val recent = container.library.recentlyPlayed.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val dropMarks = container.database.analysis().dropMarkCount().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
     val refreshing = MutableStateFlow(false)
+
+    /** Only a pull shows the spinner; the quiet check on opening the tab doesn't get in your way. */
+    val pulled = MutableStateFlow(false)
     val error = MutableStateFlow<String?>(null)
     val covers = MutableStateFlow<Map<String, List<String>>>(emptyMap())
 
-    fun refresh() = viewModelScope.launch {
+    init {
+        // A playlist just made in Spotify shows up on its own: the list is read again each time the app opens it.
+        refresh()
+    }
+
+    fun refresh(byPull: Boolean = false) = viewModelScope.launch {
+        if (refreshing.value) {
+            pulled.value = pulled.value || byPull
+            return@launch
+        }
+        pulled.value = byPull
         refreshing.value = true
         error.value = runCatching { container.library.refreshPlaylists() }.exceptionOrNull()?.let {
             "No se pudieron leer tus playlists de Spotify. Revisa la conexión y vuelve a intentar."
         }
         refreshing.value = false
+        pulled.value = false
     }
 
     fun loadCovers(ids: List<String>) = viewModelScope.launch {
@@ -66,6 +84,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 /** Your collection: the shortcuts first, then every playlist as a cover you can recognize at a glance. */
 @Composable
 fun LibraryScreen(onOpenPlaylist: (String) -> Unit, onSettings: () -> Unit, vm: LibraryViewModel = viewModel()) {
@@ -73,16 +92,33 @@ fun LibraryScreen(onOpenPlaylist: (String) -> Unit, onSettings: () -> Unit, vm: 
     val recent by vm.recent.collectAsStateWithLifecycle()
     val dropMarks by vm.dropMarks.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
+    val pulled by vm.pulled.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val covers by vm.covers.collectAsStateWithLifecycle()
 
     // First visit: the local copy is empty, so read it from Spotify once.
     LaunchedEffect(playlists) {
         val list = playlists ?: return@LaunchedEffect
-        if (list.isEmpty() && !refreshing) vm.refresh()
         vm.loadCovers(list.filter { it.imageUrl == null }.map { it.id })
     }
 
+    // Pull the list down to read your playlists from Spotify again.
+    val pullState = rememberPullToRefreshState()
+    PullToRefreshBox(
+        isRefreshing = pulled,
+        onRefresh = { vm.refresh(byPull = true) },
+        state = pullState,
+        modifier = Modifier.fillMaxSize(),
+        indicator = {
+            PullToRefreshDefaults.Indicator(
+                state = pullState,
+                isRefreshing = pulled,
+                modifier = Modifier.align(Alignment.TopCenter),
+                containerColor = Dj.colors.surface,
+                color = Dj.colors.accent,
+            )
+        },
+    ) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = Space.gutter, vertical = Space.md)) {
         item {
             ScreenHeader("Biblioteca", action = {
@@ -110,7 +146,7 @@ fun LibraryScreen(onOpenPlaylist: (String) -> Unit, onSettings: () -> Unit, vm: 
                 EmptyState(
                     DjIcons.Playlist,
                     "No hay playlists",
-                    "Crea una playlist en Spotify (o copia una de otra persona a una tuya) y toca Actualizar.",
+                    "Crea una playlist en Spotify (o copia una de otra persona a una tuya) y desliza hacia abajo para actualizar.",
                     action = "Actualizar",
                     onAction = { vm.refresh() },
                 )
@@ -125,6 +161,7 @@ fun LibraryScreen(onOpenPlaylist: (String) -> Unit, onSettings: () -> Unit, vm: 
                 modifier = Modifier.padding(top = Space.xl),
             )
         }
+    }
     }
 }
 

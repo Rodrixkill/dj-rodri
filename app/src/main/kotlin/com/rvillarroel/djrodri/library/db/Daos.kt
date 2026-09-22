@@ -126,6 +126,16 @@ interface AnalysisDao {
     @Query("DELETE FROM drop_mark WHERE trackId = :trackId")
     suspend fun deleteDropMark(trackId: String)
 
+    @Query("SELECT * FROM genre_override WHERE trackId IN (:trackIds)")
+    suspend fun genreOverrides(trackIds: List<String>): List<GenreOverrideEntity>
+
+    @Upsert
+    suspend fun upsertGenreOverride(override: GenreOverrideEntity)
+
+    /** Forget your style: the sources decide again. */
+    @Query("DELETE FROM genre_override WHERE trackId = :trackId")
+    suspend fun deleteGenreOverride(trackId: String)
+
     @Query("SELECT COUNT(*) FROM drop_mark")
     fun dropMarkCount(): Flow<Int>
 }

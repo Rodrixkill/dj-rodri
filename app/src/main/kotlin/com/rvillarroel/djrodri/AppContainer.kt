@@ -17,7 +17,9 @@ import com.rvillarroel.djrodri.data.party.PartyEngine
 import com.rvillarroel.djrodri.data.party.PartySnapshot
 import com.rvillarroel.djrodri.data.party.PartyTrack
 import com.rvillarroel.djrodri.data.sources.LrclibClient
+import com.rvillarroel.djrodri.data.sources.DeezerClient
 import com.rvillarroel.djrodri.data.sources.MusicBrainzClient
+import com.rvillarroel.djrodri.data.sources.VotingGenreSource
 import com.rvillarroel.djrodri.data.sources.ReccoBeatsClient
 import com.rvillarroel.djrodri.data.analysis.SourceTrack
 import com.rvillarroel.djrodri.domain.dj.DjIntent
@@ -69,12 +71,15 @@ class AppContainer(private val context: Context) {
 
     private val politeHttp = PoliteHttp(http)
     private val musicBrainz by lazy { MusicBrainzClient(politeHttp) }
-    private val styleResolver by lazy { ArtistStyleResolver(musicBrainz) }
+
+    /** Deezer's label genre and MusicBrainz's voted tags, decided together. */
+    private val genres by lazy { VotingGenreSource(listOf(DeezerClient(politeHttp), musicBrainz), musicBrainz) }
+    private val styleResolver by lazy { ArtistStyleResolver(genres) }
     val analyzer by lazy {
         PlaylistAnalyzer(
             lyricsSource = LrclibClient(politeHttp),
             featuresSource = ReccoBeatsClient(politeHttp),
-            genreSource = musicBrainz,
+            genreSource = genres,
             store = RoomAnalysisStore(database.analysis()),
         )
     }
