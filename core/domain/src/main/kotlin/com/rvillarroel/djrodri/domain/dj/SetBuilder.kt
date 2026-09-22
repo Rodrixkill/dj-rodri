@@ -24,6 +24,13 @@ object SetBuilder {
     private const val JITTER = 0.05
 
     /**
+     * How many songs each pick looks at. Comparing every song with every other one grows with the square of the
+     * playlist: 1,200 likes froze the phone for seconds. A DJ with a crate that big doesn't weigh every record for
+     * every change either; a fair handful of them is plenty, and it adds variety.
+     */
+    const val CANDIDATES = 150
+
+    /**
      * @param after the song playing now, so the first pick flows from it.
      * @param energyBias shifts the whole curve: positive for "más energía", negative for "más tranqui".
      * @param intent what you asked the DJ for, already turned into numbers.
@@ -41,8 +48,25 @@ object SetBuilder {
         while (remaining.isNotEmpty()) {
             val target = (targetEnergy(ordered.size, intent) + energyBias).coerceIn(0.0, 1.0)
             val prev = previous
-            val best = remaining.maxBy { score(prev, it, target, intent) + random.nextDouble() * JITTER }
-            remaining.remove(best)
+            val best = if (remaining.size <= CANDIDATES) {
+                remaining.maxBy { score(prev, it, target, intent) + random.nextDouble() * JITTER }.also { remaining.remove(it) }
+            } else {
+                // A random handful; the winner leaves by swapping with the last song, so taking it out costs nothing.
+                var bestIndex = -1
+                var bestScore = Double.NEGATIVE_INFINITY
+                repeat(CANDIDATES) {
+                    val index = random.nextInt(remaining.size)
+                    val value = score(prev, remaining[index], target, intent) + random.nextDouble() * JITTER
+                    if (value > bestScore) {
+                        bestScore = value
+                        bestIndex = index
+                    }
+                }
+                val chosen = remaining[bestIndex]
+                remaining[bestIndex] = remaining[remaining.lastIndex]
+                remaining.removeAt(remaining.lastIndex)
+                chosen
+            }
             ordered += best
             previous = best
         }

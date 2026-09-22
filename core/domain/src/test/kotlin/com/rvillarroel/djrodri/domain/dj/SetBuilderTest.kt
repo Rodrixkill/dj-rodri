@@ -47,4 +47,19 @@ class SetBuilderTest {
 
         assertTrue(firstFiveEnergy(+0.3) > firstFiveEnergy(-0.3))
     }
+
+    @Test
+    fun `a thousand likes are ordered with every song exactly once, and the flow still follows the request`() {
+        val random = Random(4)
+        val genres = listOf("pop", "house", "reggaeton", "rock", "salsa")
+        val tracks = (0 until 1_209).map { i ->
+            TrackProfile(id = "t$i", artist = "a${i % 300}", durationMs = 200_000, bpm = 90.0 + i % 60, energy = (i % 10) / 10.0, genres = setOf(genres[i % 5]))
+        }
+
+        val ordered = SetBuilder.order(tracks, intent = DjIntent(label = "perreo", genres = setOf("reggaeton")), random = random)
+
+        assertEquals(tracks.map { it.id }.sorted(), ordered.map { it.id }.sorted())
+        // A fifth of the crate is reggaeton; asked for it, the opening stretch is mostly reggaeton anyway.
+        assertTrue(ordered.take(20).count { "reggaeton" in it.genres } >= 15, ordered.take(20).joinToString { it.genres.first() })
+    }
 }

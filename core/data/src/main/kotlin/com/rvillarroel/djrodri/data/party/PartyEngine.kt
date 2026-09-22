@@ -12,6 +12,7 @@ import com.rvillarroel.djrodri.domain.dj.PlayCommand
 import com.rvillarroel.djrodri.domain.dj.SessionStats
 import com.rvillarroel.djrodri.domain.dj.TrackProfile
 import com.rvillarroel.djrodri.domain.dj.Transition
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -22,6 +23,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 
@@ -127,7 +129,14 @@ class PartyEngine(
     private val clock: () -> Long,
     private val random: Random = Random.Default,
     private val tickMs: Long = 100,
+    /**
+     * Where ordering the set runs. With a thousand songs it takes seconds, and on the main thread that froze the app
+     * (tests leave it null and run it in place).
+     */
+    private val computation: CoroutineDispatcher? = null,
 ) {
+    private suspend fun <T> compute(block: () -> T): T = computation?.let { withContext(it) { block() } } ?: block()
+
     private val _state = MutableStateFlow(PartyState())
     val state: StateFlow<PartyState> = _state
 
@@ -183,7 +192,7 @@ class PartyEngine(
         stopTicker()
         this.settings = settings
         tracks = playlist.associateBy { it.source.id }
-        val newSession = DjSession(playlist.map { it.profile }, settings.mode, random)
+        val newSession = compute { DjSession(playlist.map { it.profile }, settings.mode, random) }
         session = newSession
         sessionId = recorder.sessionStarted(playlistId, settings.mode, clock())
         _state.value = PartyState(active = true, playlistId = playlistId, settings = settings)
@@ -203,19 +212,21 @@ class PartyEngine(
         val current = profiles[snapshot.currentTrackId] ?: return@withLock false
         settings = snapshot.settings
         sessionId = snapshot.sessionId
-        session = DjSession(
-            tracks = profiles.values.toList(),
-            mode = snapshot.settings.mode,
-            random = random,
-            restored = DjSessionState(
-                current = current,
-                upcoming = snapshot.upcomingIds.mapNotNull { profiles[it] },
-                played = snapshot.playedIds.mapNotNull { profiles[it] },
-                transitions = snapshot.transitions,
-                stats = snapshot.stats,
-                intent = snapshot.intent,
-            ),
-        )
+        session = compute {
+            DjSession(
+                tracks = profiles.values.toList(),
+                mode = snapshot.settings.mode,
+                random = random,
+                restored = DjSessionState(
+                    current = current,
+                    upcoming = snapshot.upcomingIds.mapNotNull { profiles[it] },
+                    played = snapshot.playedIds.mapNotNull { profiles[it] },
+                    transitions = snapshot.transitions,
+                    stats = snapshot.stats,
+                    intent = snapshot.intent,
+                ),
+            )
+        }
         _state.value = PartyState(active = true, playlistId = snapshot.playlistId, settings = settings)
         refreshFade()
 
@@ -248,7 +259,7 @@ class PartyEngine(
     fun keepFull() = act { s -> record(PartyEventKind.KEEP_FULL); s.keepFull(); publish() }
     /** What you asked for, already turned into numbers by the rules or the local model. */
     fun applyIntent(intent: DjIntent) = act { s ->
-        s.applyIntent(intent)
+        compute { s.applyIntent(intent) }
         // A request like "a fondo" also changes how boldly the DJ cuts.
         if (s.mode != settings.mode) settings = settings.copy(mode = s.mode)
         publish()
@@ -361,8 +372,8 @@ class PartyEngine(
     /** Whether a song is still to come in this party, so "play next" can be offered. */
     fun isUpcoming(trackId: String): Boolean = session?.queue?.any { it.id == trackId } == true
 
-    fun moreEnergy() = act { s -> s.moreEnergy(); publish() }
-    fun lessEnergy() = act { s -> s.lessEnergy(); publish() }
+    fun moreEnergy() = act { s -> compute { s.moreEnergy() }; publish() }
+    fun lessEnergy() = act { s -> compute { s.lessEnergy() }; publish() }
 
     fun changeMode(mode: DjMode) = act { s ->
         settings = settings.copy(mode = mode)
@@ -392,7 +403,7 @@ class PartyEngine(
 
     fun switchPlaylist(playlistId: String, playlist: List<PartyTrack>) = act { s ->
         tracks = tracks + playlist.associateBy { it.source.id }
-        s.switchPlaylist(playlist.map { it.profile })
+        compute { s.switchPlaylist(playlist.map { it.profile }) }
         _state.value = _state.value.copy(playlistId = playlistId)
         publish()
     }

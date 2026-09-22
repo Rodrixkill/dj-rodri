@@ -66,8 +66,11 @@ class PlaylistDetailViewModel(app: Application) : AndroidViewModel(app) {
             loadedId = playlistId
         }
         runCatching {
+            val started = android.os.SystemClock.elapsedRealtime()
             val tracks = container.library.tracks(playlistId)
+            val read = android.os.SystemClock.elapsedRealtime()
             rows.value = container.trackActions.rows(tracks)
+            android.util.Log.d("DJRodri", "Playlist ${tracks.size} canciones: leídas en ${read - started} ms, perfiles en ${android.os.SystemClock.elapsedRealtime() - read} ms")
             coverage.value = container.analyzer.coverage(tracks)
             covers.value = container.library.coversOf(playlistId)
         }.onFailure {

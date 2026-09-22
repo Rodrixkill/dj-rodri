@@ -29,6 +29,7 @@ import com.rvillarroel.djrodri.library.db.DjDatabase
 import com.rvillarroel.djrodri.library.db.RoomAnalysisStore
 import com.rvillarroel.djrodri.library.db.RoomPartyRecorder
 import com.rvillarroel.djrodri.library.db.RoomPartySnapshotStore
+import com.rvillarroel.djrodri.library.db.toEntity
 import com.rvillarroel.djrodri.library.db.toSource
 import com.rvillarroel.djrodri.party.PartyService
 import com.rvillarroel.djrodri.settings.SettingsRepository
@@ -121,6 +122,7 @@ class AppContainer(private val context: Context) {
             snapshots = RoomPartySnapshotStore(database.partySnapshot()),
             scope = appScope,
             clock = SystemClock::elapsedRealtime,
+            computation = Dispatchers.Default,
         )
     }
 
@@ -157,7 +159,8 @@ class AppContainer(private val context: Context) {
      */
     suspend fun copyLikedToPlaylist(name: String, targetId: String?, onProgress: (done: Int, total: Int) -> Unit): String? = runCatching {
         onProgress(0, 0)
-        val uris = webApi.tracks(LIKED_SONGS_ID).map { it.uri }.distinct()
+        val liked = webApi.tracks(LIKED_SONGS_ID).distinctBy { it.uri }
+        val uris = liked.map { it.uri }
         if (uris.isEmpty()) return "No encontré canciones en «Tus me gusta»"
         val description = "Tus me gusta, copiados por DJ Rodri para usar el Mix de Spotify."
         // A playlist you made for this in Spotify is filled; otherwise the copy made before, or a new one.
@@ -173,6 +176,8 @@ class AppContainer(private val context: Context) {
             webApi.replaceItems(fresh, uris) { done -> onProgress(done, uris.size) }
         }
         library.refreshPlaylists()
+        // The app already has the songs: saving them means opening the copy doesn't read 25 pages from Spotify again.
+        settings.likedCopyId?.let { copy -> database.library().replaceTracks(copy, liked.distinctBy { it.id }.map { it.toEntity() }, System.currentTimeMillis()) }
         null
     }.getOrElse { it.message ?: "No se pudo crear la playlist" }
 
