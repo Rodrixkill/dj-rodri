@@ -7,6 +7,8 @@ import com.rvillarroel.djrodri.domain.playback.PlaybackSnapshot
 import com.spotify.android.appremote.api.ConnectionParams
 import com.spotify.android.appremote.api.Connector
 import com.spotify.android.appremote.api.SpotifyAppRemote
+import com.spotify.android.appremote.api.error.SpotifyConnectionTerminatedException
+import com.spotify.android.appremote.api.error.SpotifyDisconnectedException
 import com.spotify.protocol.client.CallResult
 import com.spotify.protocol.types.CrossfadeState
 import com.spotify.protocol.types.PlayerState
@@ -55,7 +57,10 @@ class RemoteController(var logger: (String) -> Unit = { android.util.Log.d("DJRo
                     .setErrorCallback { logger("App Remote: error en la suscripción: $it") }
             }
 
+            // Also called long after connecting, when Spotify closes: the old connection is dead from then on.
             override fun onFailure(error: Throwable) {
+                if (remote != null) freezePosition()
+                remote = null
                 _connected.value = false
                 logger("App Remote: FALLÓ la conexión: ${error.javaClass.simpleName}: ${error.message}")
             }
@@ -97,24 +102,66 @@ class RemoteController(var logger: (String) -> Unit = { android.util.Log.d("DJRo
     fun resume() = call("resume") { it.playerApi.resume() }
     fun seekTo(positionMs: Long) = call("seekTo $positionMs") { it.playerApi.seekTo(positionMs) }
     fun setShuffle(on: Boolean) = call("shuffle $on") { it.playerApi.setShuffle(on) }
+    fun skipToIndex(contextUri: String, index: Int) = call("skipToIndex $contextUri $index") { it.playerApi.skipToIndex(contextUri, index) }
+
+    /** Whether Spotify is still on the other end; a closed Spotify is noticed (and forgotten) here. */
+    fun isLive(): Boolean = liveRemote() != null
 
     suspend fun crossfade(): CrossfadeState? = await { it.playerApi.crossfadeState }
 
     suspend fun playerState(): PlayerState? = await { it.playerApi.playerState }
 
     private fun call(label: String, block: (SpotifyAppRemote) -> CallResult<*>): Boolean {
-        val r = remote ?: run { logger("$label: App Remote no está conectado"); return false }
-        block(r).setErrorCallback { logger("$label → ERROR ${it.message}") }
+        val r = liveRemote() ?: run { logger("$label: App Remote no está conectado"); return false }
+        block(r).setErrorCallback {
+            logger("$label → ERROR ${it.javaClass.simpleName}: ${it.message}")
+            if (it.isDisconnect()) lost()
+        }
         return true
     }
 
+    /** The connection, if Spotify is still on the other end of it. */
+    private fun liveRemote(): SpotifyAppRemote? = remote?.takeIf { it.isConnected } ?: run {
+        if (remote != null) lost()
+        null
+    }
+
+    /**
+     * Spotify was closed (by HyperOS, or a swipe): every call on the old connection fails without a word, so it is
+     * dropped and the next play reconnects.
+     */
+    private fun lost() {
+        if (remote == null && !_connected.value) return
+        logger("App Remote: Spotify se cerró, conexión perdida")
+        freezePosition()
+        remote?.let { runCatching { SpotifyAppRemote.disconnect(it) } }
+        remote = null
+        _connected.value = false
+    }
+
+    /**
+     * The music stopped when Spotify closed: the song is held paused at that second, so the screen stops counting and
+     * playing it again starts right there, not at the last position Spotify happened to report.
+     */
+    private fun freezePosition() {
+        val now = SystemClock.elapsedRealtime()
+        _nowPlaying.value = _nowPlaying.value?.let { np ->
+            val at = np.snapshot.positionAt(now).coerceAtMost(np.track.duration)
+            np.copy(snapshot = np.snapshot.copy(positionMs = at, capturedAtMs = now, isPaused = true))
+        }
+    }
+
+    private fun Throwable.isDisconnect() =
+        this is SpotifyDisconnectedException || this is SpotifyConnectionTerminatedException || remote?.isConnected == false
+
     private suspend fun <T> await(block: (SpotifyAppRemote) -> CallResult<T>): T? {
-        val r = remote ?: return null
+        val r = liveRemote() ?: return null
         return suspendCancellableCoroutine { continuation ->
             block(r)
                 .setResultCallback { if (continuation.isActive) continuation.resume(it) }
                 .setErrorCallback {
-                    logger("App Remote → ERROR ${it.message}")
+                    logger("App Remote → ERROR ${it.javaClass.simpleName}: ${it.message}")
+                    if (it.isDisconnect()) lost()
                     if (continuation.isActive) continuation.resume(null)
                 }
         }

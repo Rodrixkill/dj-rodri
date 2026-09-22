@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -142,6 +143,11 @@ class PartyViewModel(app: Application) : AndroidViewModel(app) {
         if (message.value == null) onStarted()
     }
 
+    /** False while Spotify is closed: the screen says so, and play opens it again. */
+    val spotifyOpen = container.remote.connected
+
+    fun playPause(context: android.content.Context) = container.playPause(context)
+
     override fun onCleared() = voice.reset()
 }
 
@@ -203,6 +209,7 @@ fun PartyScreen(onLibrary: () -> Unit, vm: PartyViewModel = viewModel()) {
 @Composable
 private fun NowPlaying(state: PartyState, vm: PartyViewModel) {
     val engine = vm.engine
+    val context = LocalContext.current
     var dropMarkedAt by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(dropMarkedAt) { if (dropMarkedAt != null) { delay(2_500); dropMarkedAt = null } }
 
@@ -251,10 +258,11 @@ private fun NowPlaying(state: PartyState, vm: PartyViewModel) {
     Row(Modifier.fillMaxWidth().padding(top = Space.sm), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         DjIconButton(DjIcons.Dislike, "No va: saltar y no volver a ponerla", engine::dislike, tint = Dj.colors.textSecondary)
         DjIconButton(DjIcons.Previous, "Anterior", engine::previous, size = IconSize.lg)
-        PlayButton(playing = !state.isPaused, onClick = engine::togglePause, size = 72.dp)
+        PlayButton(playing = !state.isPaused, onClick = { vm.playPause(context) }, size = 72.dp)
         DjIconButton(DjIcons.Next, "Siguiente", engine::next, size = IconSize.lg)
         DjIconButton(DjIcons.KeepFull, "Completa: esta suena entera", engine::keepFull, tint = if (state.plan?.exit is Exit.Full) Dj.colors.textPrimary else Dj.colors.textSecondary)
     }
+    SpotifyClosedNotice(vm)
 
     val p = state.currentProfile
     MusicFacts(p?.bpm, p?.key?.toString(), p?.energy, Modifier.padding(top = Space.lg))
@@ -473,6 +481,7 @@ private fun PlaylistPicker(vm: PartyViewModel, onDismiss: () -> Unit) {
 @Composable
 private fun SpotifyMixPlayer(mix: com.rvillarroel.djrodri.spotify.SpotifyMixState, vm: PartyViewModel) {
     val session = vm.mixSession
+    val context = LocalContext.current
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Space.gutter, vertical = Space.xs)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -495,13 +504,21 @@ private fun SpotifyMixPlayer(mix: com.rvillarroel.djrodri.spotify.SpotifyMixStat
         SeekBar(mix.positionMs, mix.durationMs, session::seek, Modifier.padding(top = Space.sm))
         Row(Modifier.fillMaxWidth().padding(top = Space.sm), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             DjIconButton(DjIcons.Previous, "Anterior", session::previous, size = IconSize.lg)
-            PlayButton(playing = !mix.isPaused, onClick = session::togglePause, size = 72.dp)
+            PlayButton(playing = !mix.isPaused, onClick = { vm.playPause(context) }, size = 72.dp)
             DjIconButton(DjIcons.Next, "Siguiente", session::next, size = IconSize.lg)
         }
+        SpotifyClosedNotice(vm)
         InlineMessage(
             "Las transiciones las hace Spotify con tu Mix. Si no oyes ninguna, revisa en Spotify que la playlist tenga el Mix armado. Saltar a mano puede cortar la transición que venía.",
             Modifier.padding(top = Space.lg),
             isError = false,
         )
     }
+}
+
+/** HyperOS (or a swipe) can close Spotify mid-party: then the buttons would do nothing, so the screen says what to do. */
+@Composable
+private fun SpotifyClosedNotice(vm: PartyViewModel) {
+    val open by vm.spotifyOpen.collectAsStateWithLifecycle()
+    if (!open) InlineMessage("Spotify se cerró: toca play para seguir donde iba", Modifier.padding(top = Space.sm), isError = true)
 }

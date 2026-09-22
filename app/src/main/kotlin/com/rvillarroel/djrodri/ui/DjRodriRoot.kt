@@ -237,6 +237,7 @@ private fun SideRail(current: Tab, onSelect: (Tab) -> Unit) {
 /** The party follows you around the app: what plays, a play/pause, a skip, and one tap back to it. */
 @Composable
 private fun MiniPlayer(party: PartyState, mix: SpotifyMixState, container: AppContainer, onOpen: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     // The Spotify Mix and the party never play together: whichever is on fills the bar.
     val title: String
     val artist: String
@@ -276,7 +277,7 @@ private fun MiniPlayer(party: PartyState, mix: SpotifyMixState, container: AppCo
             DjIconButton(
                 if (paused) DjIcons.Play else DjIcons.Pause,
                 if (paused) "Reproducir" else "Pausa",
-                { if (mix.active) container.spotifyMix.togglePause() else container.party.togglePause() },
+                { container.playPause(context) },
             )
             DjIconButton(DjIcons.Next, "Siguiente", { if (mix.active) container.spotifyMix.next() else container.party.next() })
         }

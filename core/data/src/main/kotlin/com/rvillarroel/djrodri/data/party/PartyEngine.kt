@@ -393,6 +393,28 @@ class PartyEngine(
         if (paused) player.resume() else player.pause()
     }
 
+    /**
+     * Spotify was closed under the party and has just been opened again. It forgot the song and its queue, so a resume
+     * would do nothing: the current song plays again from where it stopped, and the DJ queues the rest as usual.
+     */
+    fun reconnected() = act { s ->
+        val song = s.current ?: return@act
+        val uri = uriOf(song.id)
+        // Where the music stopped: the paused position, or the last one Spotify reported while playing.
+        val atMs = player.state.value?.takeIf { it.trackUri == uri }?.positionMs ?: 0
+        handoff = null
+        queued.clear()
+        lastCommandAtMs = clock()
+        val sentAt = clock()
+        player.play(uri)
+        if (atMs > 0) {
+            // A reopened Spotify first reports the song paused where it was left: seeking before it plays is refused.
+            withTimeoutOrNull(SWITCH_TIMEOUT_MS) { player.state.first { it?.trackUri == uri && !it.isPaused && it.capturedAtMs >= sentAt } }
+            player.seekTo(atMs)
+        }
+        publish()
+    }
+
     /** "¡Drop!": remember where the drop of the current song really is, for every future party. */
     fun markDrop() = act { s ->
         val song = s.current ?: return@act

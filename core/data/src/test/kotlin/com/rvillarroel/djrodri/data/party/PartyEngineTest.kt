@@ -161,6 +161,22 @@ class PartyEngineTest {
     }
 
     @Test
+    fun `when Spotify comes back after being closed, the same song plays again from where it stopped`() = runTest {
+        val h = harness()
+        h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))
+        val song = h.currentUri
+        advanceTimeBy(22_000)
+        h.engine.togglePause()
+        runCurrent()
+
+        h.engine.reconnected()
+        runCurrent()
+
+        assertEquals(listOf("play $song", "seek 22000"), h.player.calls.takeLast(2))
+        assertFalse(h.player.state.value!!.isPaused)
+    }
+
+    @Test
     fun `a whole song hands over to the next one right at its end`() = runTest {
         val h = harness()
         h.engine.start("pl", h.playlist, PartySettings(DjMode.FIESTA))

@@ -54,7 +54,7 @@ class PartyService : LifecycleService() {
         when (intent?.action) {
             ACTION_NEXT -> engine.next()
             ACTION_PREVIOUS -> engine.previous()
-            ACTION_PAUSE -> engine.togglePause()
+            ACTION_PAUSE -> container.playPause(this)
             ACTION_KEEP_FULL -> engine.keepFull()
             ACTION_DISLIKE -> engine.dislike()
             ACTION_STOP -> engine.stop()

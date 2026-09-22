@@ -50,6 +50,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import java.util.Calendar
@@ -137,6 +138,30 @@ class AppContainer(private val context: Context) {
         val tracks = library.tracks(playlistId)
         val profiles = analyzer.profiles(tracks).associateBy { it.id }
         return tracks.distinctBy { it.id }.map { PartyTrack(it, profiles.getValue(it.id)) }
+    }
+
+    private var reconnecting = false
+
+    /**
+     * Play/pause from any control. When Spotify was closed under the party (HyperOS does it), pause and resume would
+     * go nowhere: this opens Spotify again and carries on with the same song, from the same second.
+     */
+    fun playPause(context: Context) {
+        val mixOn = spotifyMix.state.value.active
+        if (remote.isLive()) {
+            if (mixOn) spotifyMix.togglePause() else party.togglePause()
+            return
+        }
+        if (reconnecting) return
+        reconnecting = true
+        appScope.launch {
+            try {
+                if (!ensureRemoteConnected(context)) return@launch
+                if (mixOn) spotifyMix.reconnected() else party.reconnected()
+            } finally {
+                reconnecting = false
+            }
+        }
     }
 
     /** Spotify's own Mix: the whole playlist, in order, with the transitions made in Spotify. DJ Rodri only watches. */
